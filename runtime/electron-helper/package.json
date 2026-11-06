@@ -1,0 +1,7 @@
+{
+  "name": "workbuddy-pet-electron-helper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "workbuddy-pet desktop helper — Electron transparent overlay window",
+  "main": "main.js"
+}

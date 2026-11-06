@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "fatfish-pet": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "${CODEBUDDY_PLUGIN_ROOT}/scripts/wb-pet-mcp.mjs"
+      ],
+      "cwd": "${CODEBUDDY_PLUGIN_ROOT}",
+      "env": {
+        "WORKBUDDY_WHALE_STATE_DIR": "${CODEBUDDY_PLUGIN_DATA}"
+      },
+      "defer_loading": false
+    }
+  }
+}
