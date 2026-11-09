@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      ★ <base href="/"> 是**必需**的，不是裝飾。
+
+      DSH 的 client 半側用 `document.baseURI` 推導 API 前綴：
+        src/shared/constants.ts → routePathOf(baseURI) = mountPrefixOf(baseURI) + '/dsh-pet-7340'
+      而 mountPrefixOf 回的是 **pathname 去掉尾斜線**（不是目錄部分）。
+      所以頁面若開在 /fatfish-overlay.html → pathname 就是 '/fatfish-overlay.html'
+      → 前綴變成 '/fatfish-overlay.html/dsh-pet-7340' → 所有 fetch 都 404。
+
+      設了 <base href="/"> 之後 baseURI 變成 http://127.0.0.1:3080/ → pathname '/' → 前綴 '' → 路徑正確。
+      （DSH 自己也是這樣做的：它回 index 時注入 <base href="./">。）
+    -->
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>大肥魚桌寵</title>
+    <style>
+      /*
+        頁面本身要「什麼都沒有」：寵物用 position:fixed 浮在頁面上（src/client/pet/css.ts），
+        所以頁面背景必須透明、不能有捲軸，否則 WorkBuddy 的 iframe 裡會出現一條白邊與捲軸。
+      */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+      /* 掛載點本身不擋事件：真正的命中區由寵物卡片自己的 .dsh-pet-hit 處理。 */
+      #dsh-pet-root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      掛載點：id 必須與 pet-host/overlay/standalone-entry.ts 的 ROOT_ID 一致，
+      對不上時入口會在頁面上印出錯誤訊息（不會安靜地什麼都不發生）。
+    -->
+    <div id="dsh-pet-root"></div>
+    <!--
+      絕對路徑：<base href="/"> 會影響相對路徑的解析，用絕對路徑最不會出錯。
+      type="module" → 延後執行，DOM 一定已經就緒。
+    -->
+    <script type="module" src="/fatfish-overlay/fatfish-overlay.js"></script>
+  </body>
+</html>
