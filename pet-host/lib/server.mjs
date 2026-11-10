@@ -128,6 +128,18 @@ export function createGuard({ portRef, token }) {
       if (!ok) {
         // 讀操作本來就放行；走到這裡的都是寫操作。
         const llm = LLM_WRITE_PATTERNS.some((pattern) => pattern.test(path));
+        // ★ 同源請求免令牌（2026-11-10 修）
+        //   誰會是同源？本服務自己送出的頁面：WorkBuddy 介面裡的 overlay（/fatfish-overlay.html）
+        //   與獨立模式頁面。它們的 fetch 目標就是 127.0.0.1:3080 → 同源。
+        //   為什麼需要？client 半側（上游 dsh-pet 的 lib/client.js）**完全沒有帶令牌的程式碼**
+        //   （grep x-dsh-pet-token 零命中），所以任何寫入端點都會被 403
+        //   → 症狀：右鍵選單的「切換桌面與網頁顯示」等動作点了没反应。
+        //   DSH 版没这问题：它的路由挂在 app 内部，不经过这层 HTTP 守门。
+        //   跨站一律仍要令牌（外人拿不到令牌）；会呼叫模型的端点即使同源也要令牌（避免被恶意网页诱导烧额度）。
+        const sameOrigin =
+          req.headers['sec-fetch-site'] === 'same-origin' ||
+          (origin !== undefined && origin === `http://${host}`);
+        if (!llm && !isCrossSite && sameOrigin) return true;
         return reject(res, 403, llm ? '此端點會呼叫模型，需要令牌' : '此寫入端點需要令牌');
       }
       return true;
