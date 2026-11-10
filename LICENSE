@@ -1,13 +1,90 @@
+大肥魚桌寵（fatfish-pet）· WorkBuddy 版
+=========================================
+
+本檔案是**雙軌授權**：程式碼與美術素材的授權不同，請依下表判斷你要使用的部分。
+
+| 範圍 | 授權 |
+|---|---|
+| `runtime/`（桌面寵物 Helper）、`scripts/`、`tools/`、`hooks/`、`skills/`、`.codebuddy-plugin/`、以及本目錄的文件 | **MIT**（見下方第一節） |
+| `assets/**`（webm 動畫、memes 表情包、pic 圖示、fonts 字型、sound 音效、logo.png、config.jsonc 的素材引用部分） | **CC BY-NC-SA 4.0**（見下方第二節）—— **禁止商用** |
+
+轉發、修改、再發布時，**兩節都必須保留**。
+
+
+--------------------------------------------------------------------------
+第一節 · 程式碼（MIT）
+--------------------------------------------------------------------------
+
 MIT License
 
-Copyright (c) 2026 勛
+Copyright (c) 2026 PC2005-cloud（原始 dsh-pet 專案）
+Copyright (c) 2026 fatfish-pet contributors（WorkBuddy 移植版）
 
-本倉庫的「程式碼」以 MIT 授權釋出。
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-但請注意：
-- 角色形象（藍色大肥魚／鯨魚娘）為社群二創，**並非 DeepSeek 官方形象**。
-  美術素材依 CC BY-NC-SA 4.0 釋出：署名 · 禁止商用 · 相同方式共享。
-- 動畫素材改編自 PC2005-cloud/dsh-pet（該專案程式碼為 MIT，美術同樣為 CC BY-NC-SA 4.0）。
-- 原型角色「溟月」出自 B 站 @上善無形；
-  加入 DeepSeek 元素的女僕鯨魚娘設計出自 B 站 @ZipZipPipe。
-- 轉發時請保留以上署名資訊。
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+--------------------------------------------------------------------------
+第二節 · 美術素材（CC BY-NC-SA 4.0，禁止商用）
+--------------------------------------------------------------------------
+
+本節**不適用** MIT 授權。
+
+`assets/` 下的美術素材（webm 動畫、表情包、圖示、字型、音效）為社群二創的
+DeepSeek「**大肥魚**（鯨魚娘 / 藍毛小女僕）」形象，**並非 DeepSeek 官方形象**。
+
+  · 原型「溟月」出自 B 站 [@上善無形](https://space.bilibili.com/4456176)
+  · DeepSeek 版（女僕鯨魚娘）設計出自 B 站 [@ZipZipPipe](https://space.bilibili.com/4168597)
+
+授權條款：**Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+International（CC BY-NC-SA 4.0）**
+
+  · **BY**      —— 須署名（轉發時保留本節的署名資訊）
+  · **NC**      —— **禁止商用**：不得用於任何商業用途、不得用於營利性質的產品或服務
+  · **SA**      —— 相同方式共享：改作後須以相同授權發布
+  · 完整條款：https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hant
+
+素材來源說明（PROVENANCE）
+
+| 項目 | 說明 |
+|---|---|
+| `assets/webm/*.webm`（109 支） | 動畫素材取自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（程式 MIT / 美術 CC BY-NC-SA 4.0）。640×360、VP9-alpha。 |
+| `assets/memes/*.png`（27 張） | 同上專案的表情包池，供碎碎念／對話配圖。 |
+| `assets/pic/*.png`（8 張） | 同上專案的通知圖示與游標素材。 |
+| `assets/fonts/上首软糖体.ttf` | 上首軟糖體字型，版權屬字型作者；隨包原樣提供。 |
+| `assets/sound/click-duck.wav` | 同上專案的點擊音效。 |
+| `assets/logo.png` | 同上專案的插件圖示。 |
+| `assets/config.jsonc` | 設定檔本體屬 MIT；其中 `memes` 段引用上表的素材名稱。 |
+
+權利主張（Takedown）
+
+如果你認為本包內的素材侵犯了你的權利，請開一個 issue，說明**檔名**與**依據**，
+我們會在核實後**立即替換或移除**，不附加其它條件。我們也歡迎提供可自由再分發的
+替代素材。
+
+
+--------------------------------------------------------------------------
+第三節 · 上游專案
+--------------------------------------------------------------------------
+
+本 WorkBuddy 版是下列專案的移植，原始出處與授權如下：
+
+| 專案 | 角色 | 授權 |
+|---|---|---|
+| [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) | 桌寵本體（Electron 桌寵 Helper、109 支 webm、物理、選單、氣泡、表情包、設定檔） | 程式 MIT / 美術 CC BY-NC-SA 4.0 |
+| [MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) | 記帳掛件的設計參考 | 程式 MIT |

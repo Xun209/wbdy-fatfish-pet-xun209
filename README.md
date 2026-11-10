@@ -1,15 +1,3 @@
-# WorkBuddy 大肥魚桌寵 · 勛
-
-WorkBuddy 桌面版寵物版大肥魚：WorkBuddy 沒有可註冊的 lifecycle hook，改用輪詢本機 workbuddy.db 的 sessions 表推斷狀態。
-
-> 本倉庫為 **勛** 的版本，改編自
-> [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（DeepSeek Harness 的大肥魚桌寵，MIT）與
-> [MeteorNOX/DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget)（小鯨魚記賬掛件，MIT）。
-> 角色形象為社群二創的 DeepSeek「大肥魚」（鯨魚娘），非官方形象，美術素材 CC BY-NC-SA 4.0（禁止商用）。
-> 詳見 [LICENSE](LICENSE)。
-
----
-
 # 大肥魚桌寵 · WorkBuddy 版（fatfish-pet）
 
 一隻住在 Windows 桌面上的藍髮鯨魚娘「**藍毛小女僕**」。她不聊天、只陪著你，
@@ -256,3 +244,21 @@ node tools/package-plugin.mjs --include-lib-extras
   - `work buddy改\_research_variants.md` —— 六變體盤點
   - `work buddy改\_research_dsh_reference.md` —— DSH 版完整逆向規格
   - `work buddy改\_impl_packaging.md` —— 素材組裝與打包紀錄
+
+## 上游同步紀錄
+
+本分支改編自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT）。
+上游 **v0.4.7**（2026-11-08/09）的改動與本分支的對照：
+
+| 上游改動 | 本分支 |
+|---|---|
+| 語音四類開關改為平級、總開關只管「手動播報」 | **未套用**：本分支的語音閘門在 `lib/index.js`（上游宿主半側的建置物，與上游差 20KB，改不動）。已保留原語意，並新增 `voiceNotifyEnabled` 鍵（預設關、暫未接線） |
+| 吃白飯（baifan）覆蓋層改掛 `shell.overlay` 插槽（修 Windows 標題欄拖曳死區 #323/#324） | 不適用：本分支**沒有**吃白飯功能 |
+| 新增 `voice-notify`（通知播報）、對話面板多語言、頭像路由、`chat-memory-provider` | 不適用：本分支是精簡分支，沒有這些功能 |
+| 獨立模式對話頁白屏修正 | 不適用：本分支的獨立模式在 `pet-host/main.mjs`，與上游不同 |
+| `assets` 新增字型與音效 | 已有 ✓ |
+
+本分支**自行實作**（上游沒有）：
+- 桌面視窗拖曳條 + 右上角自畫 −□✕（`pet-host/overlay/`，因 Windows 上 Electron 無框視窗不畫原生控件）
+- WorkBuddy 介面內的 iframe 版寵物（`usage-overlay/`）
+- MiniMax 餘量膠囊、WorkBuddy 專用 hooks / MCP / Skill
