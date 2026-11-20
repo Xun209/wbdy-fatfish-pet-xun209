@@ -8,12 +8,17 @@
  *   寵物實際只需要一件事：「給我一段提示詞，回我一句話」。
  *   所以這裡只做那一件事，零第三方相依（用 Node 內建的 fetch）。
  *
- * 金鑰從哪來（依序）：
+ * 後端從哪來（依序，**明確指定優先於自動發現**）：
  *   1. 環境變數 WORKBUDDY_PET_AI_BASE_URL / _API_KEY / _MODEL / _PROVIDER
  *   2. 設定檔 <狀態目錄>/pet-host/ai.json
- *   3. DSH 的憑據庫 ~/.dsh/.credentials.yaml 的 refs（MiniMax 金鑰）
+ *   3. **WorkBuddy 桌面端（自動接入）** —— 使用者已經登入 WorkBuddy，額度就在那裡，
+ *      寵物直接用它，不必另外給金鑰。見 ./workbuddy-llm.mjs。
+ *   4. DSH 的憑據庫 ~/.dsh/.credentials.yaml 的 refs（MiniMax 金鑰）
  *      —— 這是「沿用使用者本機已有的金鑰」，不是另找來源；
  *      DSH 換金鑰時寵物跟著換，不用改兩處。
+ *
+ * 為什麼 WorkBuddy 排在 DSH 憑據庫前面：它才是「本機正在用的那一把鑰匙」，
+ * 而 DSH 憑據庫是另一個應用的（金鑰可能已過期，或根本不是使用者想讓寵物用的那把）。
  *
  * 對齊 DSH 的 `ctx.llm` 契約（寵物宿主半側就是照這個形狀呼叫的）：
  *   stream(options) → AsyncIterable<{type:'text', text}>
@@ -26,6 +31,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import {
+  DEFAULT_WORKBUDDY_MODEL,
+  fetchWorkBuddyCatalog,
+  findWorkBuddyClient,
+  listWorkBuddyModels,
+  pickCheapestModel,
+  readWorkBuddyCredentials,
+  streamWorkBuddy,
+} from './workbuddy-llm.mjs';
 
 /** 預設的 OpenAI 相容端點（MiniMax 國內版）。 */
 const DEFAULT_BASE_URL = 'https://api.minimaxi.com/v1';
@@ -35,6 +49,8 @@ const DEFAULT_MODEL = 'MiniMax-M3.1-Flash';
 const DEFAULT_PROVIDER = 'minimax-cn';
 /** 單次請求逾時（毫秒）。DSH 版的碎碎念是 30s；聊天要等使用者回覆，給寬一點。 */
 const DEFAULT_TIMEOUT_MS = 60_000;
+/** 後端快照的有效期（毫秒）：憑據會被重新整理，不必每次請求都重解一次。 */
+const BACKEND_TTL_MS = 5 * 60 * 1000;
 
 /**
  * 讀 DSH 憑據庫的 refs 區塊。
@@ -70,7 +86,6 @@ function readDshRefs(file) {
 
 /**
  * 把寵物宿主半側給的訊息轉成 OpenAI 相容格式。
- *
  * @param {unknown} system - system 提示（字串或 undefined）。
  * @param {unknown} messages - 訊息陣列。
  * @returns {Array<{role: string, content: string}>} OpenAI 格式的訊息。
@@ -105,6 +120,13 @@ function toOpenAiMessages(system, messages) {
 export function createAi({ stateDir, logger, env = process.env }) {
   const configFile = join(stateDir, 'pet-host', 'ai.json');
 
+  /** 最近一次解析出來的後端（同步快照；describe() 與 list* 都只讀它）。 */
+  let snapshot = null;
+  /** 正在進行中的解析（避免併發重複解析）。 */
+  let inflight = null;
+  /** 解析失敗的最後一次原因（給日誌，不給使用者看堆疊）。 */
+  let lastError = '';
+
   /** 讀設定檔；壞掉就當沒有（不讓設定問題拖垮主機）。 */
   const readFileConfig = () => {
     if (!existsSync(configFile)) return {};
@@ -118,11 +140,44 @@ export function createAi({ stateDir, logger, env = process.env }) {
   };
 
   /**
-   * 決定這次用哪個後端。
-   *
-   * @returns {{provider: string, model: string, baseUrl: string, apiKey: string, source: string}|null} 後端；沒有可用金鑰回 null。
+   * 解析 WorkBuddy 桌面端後端。
+   * @returns {Promise<object|null>} 後端；本機沒裝 / 沒登入 / 解不開回 null。
    */
-  const resolve = () => {
+  const resolveWorkBuddyBackend = async () => {
+    const client = findWorkBuddyClient();
+    if (!client) return null;
+    const credentials = await readWorkBuddyCredentials();
+    if (!credentials) return null;
+    // 模型目錄：**上游帳號目錄優先**（那才是這個帳號真的能調的），
+    // 拿不到就退回本機離線清單（`cli/product.json`，產品級的，但至少不是空的下拉框）。
+    const catalog = await fetchWorkBuddyCatalog();
+    const models = catalog.length > 0 ? catalog : listWorkBuddyModels();
+    const wanted = env.WORKBUDDY_PET_AI_MODEL?.trim();
+    // 模型選擇：使用者明確指定 → 用；否則用預設那支（目錄裡有就用）；
+    // 連預設都不在目錄裡（上游改版換了 id）→ 挑最便宜的一支，別讓寵物啞掉。
+    const model = wanted
+      ? wanted
+      : models.some((item) => item.id === DEFAULT_WORKBUDDY_MODEL)
+        ? DEFAULT_WORKBUDDY_MODEL
+        : pickCheapestModel(models) || DEFAULT_WORKBUDDY_MODEL;
+    return {
+      kind: 'workbuddy',
+      provider: 'workbuddy',
+      model,
+      baseUrl: credentials.upstream,
+      apiKey: '',
+      source: `WorkBuddy 桌面端（${client.exe}，帳號 ${credentials.uid.slice(0, 8)}…）`,
+      credentials,
+      client,
+      models,
+    };
+  };
+
+  /**
+   * 決定這次用哪個後端。
+   * @returns {Promise<object|null>} 後端；沒有可用來源回 null。
+   */
+  const resolve = async () => {
     const file = readFileConfig();
     const envBase = (env.WORKBUDDY_PET_AI_BASE_URL || '').trim();
     const envKey = (env.WORKBUDDY_PET_AI_API_KEY || '').trim();
@@ -131,6 +186,7 @@ export function createAi({ stateDir, logger, env = process.env }) {
 
     if (envBase && envKey) {
       return {
+        kind: 'openai',
         provider: envProvider || DEFAULT_PROVIDER,
         model: envModel || DEFAULT_MODEL,
         baseUrl: envBase.replace(/\/+$/, ''),
@@ -142,6 +198,7 @@ export function createAi({ stateDir, logger, env = process.env }) {
     const fileKey = typeof file.apiKey === 'string' ? file.apiKey.trim() : '';
     if (fileKey) {
       return {
+        kind: 'openai',
         provider: (typeof file.provider === 'string' && file.provider.trim()) || DEFAULT_PROVIDER,
         model: (typeof file.model === 'string' && file.model.trim()) || DEFAULT_MODEL,
         baseUrl: (typeof file.baseUrl === 'string' && file.baseUrl.trim().replace(/\/+$/, '')) || DEFAULT_BASE_URL,
@@ -150,11 +207,21 @@ export function createAi({ stateDir, logger, env = process.env }) {
       };
     }
 
+    // 自動接入：WorkBuddy 桌面端（使用者已登入 → 額度就在那裡）。
+    try {
+      const workbuddy = await resolveWorkBuddyBackend();
+      if (workbuddy) return workbuddy;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      logger?.warn?.(`WorkBuddy 自動接入失敗，改用其他來源：${lastError}`);
+    }
+
     // 最後一哩：沿用 DSH 憑據庫裡已有的 MiniMax 金鑰。
     const refs = readDshRefs(join(homedir(), '.dsh', '.credentials.yaml'));
     const dshKey = (refs.MINIMAX_CN_API_KEY || refs.MINIMAX_API_KEY || '').trim();
     if (dshKey) {
       return {
+        kind: 'openai',
         provider: DEFAULT_PROVIDER,
         model: DEFAULT_MODEL,
         baseUrl: DEFAULT_BASE_URL,
@@ -166,19 +233,38 @@ export function createAi({ stateDir, logger, env = process.env }) {
     return null;
   };
 
-  /** 目前這次呼叫要用的後端（每次重新解析 → 換金鑰立刻生效）。 */
-  const backend = () => resolve();
+  /**
+   * 目前這次呼叫要用的後端（帶快取）。
+   *
+   * 為什麼要快取：WorkBuddy 那一路要解密登入憑據（讀檔 + AES），每 5 分鐘一次就夠；
+   * 但 TTL 到期後仍會重解，所以使用者換號 / 重新登入不用重啟主機。
+   * @returns {Promise<object|null>} 後端。
+   */
+  const backend = async () => {
+    if (snapshot && Date.now() - snapshot.at < BACKEND_TTL_MS) return snapshot.target;
+    if (!inflight) {
+      inflight = resolve()
+        .then((target) => {
+          snapshot = target ? { target, at: Date.now() } : null;
+          inflight = null;
+          return target;
+        })
+        .catch((error) => {
+          lastError = error instanceof Error ? error.message : String(error);
+          inflight = null;
+          return null;
+        });
+    }
+    return inflight;
+  };
 
   /**
-   * 串流生成。
-   *
-   * @param {object} options - 呼叫選項（形狀同 DSH 的 ctx.llm.stream）。
+   * OpenAI 相容路徑的串流生成。
+   * @param {object} target - 後端描述。
+   * @param {object} options - 呼叫選項。
    * @returns {AsyncGenerator<{type: 'text', text: string}>} 文字塊。
    */
-  async function* stream(options) {
-    const target = backend();
-    if (!target) throw new Error('沒有可用的模型後端（缺 API 金鑰）');
-
+  async function* streamOpenAi(target, options) {
     const messages = toOpenAiMessages(options?.system, options?.messages);
     if (messages.length === 0) throw new Error('請求沒有任何訊息');
 
@@ -238,30 +324,67 @@ export function createAi({ stateDir, logger, env = process.env }) {
     }
   }
 
+  /**
+   * 串流生成（兩條後端路徑共用同一個對外介面）。
+   * @param {object} options - 呼叫選項（形狀同 DSH 的 ctx.llm.stream）。
+   * @returns {AsyncGenerator<{type: 'text', text: string}>} 文字塊。
+   */
+  async function* stream(options) {
+    const target = await backend();
+    if (!target) throw new Error('沒有可用的模型後端（缺 API 金鑰）');
+    if (target.kind === 'workbuddy') {
+      yield* streamWorkBuddy({
+        model: options?.model || target.model,
+        system: options?.system,
+        messages: options?.messages,
+        temperature: options?.temperature,
+        logger,
+      });
+      return;
+    }
+    yield* streamOpenAi(target, options);
+  }
+
+  // 立刻開始第一次解析：主機啟動時就能知道「到底接上了哪個後端」。
+  const ready = backend();
+
   return {
-    /** 目前的後端描述（不曝露金鑰）。 */
+    /** 等第一次解析完成（啟動摘要要靠它報出實際接上的後端）。 */
+    async ready() {
+      await ready;
+      return snapshot ? snapshot.target : null;
+    },
+
+    /** 目前的後端描述（不曝露金鑰）。同步：只讀已解析好的快照。 */
     describe() {
-      const target = backend();
-      if (!target) return { ready: false, provider: '', model: '', baseUrl: '', source: '' };
+      const target = snapshot?.target;
+      if (!target) {
+        return { ready: false, provider: '', model: '', baseUrl: '', source: '', error: lastError };
+      }
       return {
         ready: true,
         provider: target.provider,
         model: target.model,
         baseUrl: target.baseUrl,
         source: target.source,
+        kind: target.kind,
       };
     },
 
     /** 服務商清單（DSH 的 ctx.llm 契約）。 */
     listProviders() {
-      const target = backend();
+      const target = snapshot?.target;
       return target ? [{ id: target.provider, name: target.provider }] : [];
     },
 
-    /** 模型清單（DSH 的 ctx.llm 契約）。 */
+    /** 模型清單（DSH 的 ctx.llm 契約）。WorkBuddy 那一路給的是本機目錄裡的真實模型。 */
     listModels() {
-      const target = backend();
-      return target ? [{ id: target.model, name: target.model }] : [];
+      const target = snapshot?.target;
+      if (!target) return [];
+      if (target.kind === 'workbuddy' && Array.isArray(target.models)) {
+        return target.models.map((model) => ({ id: model.id, name: model.name }));
+      }
+      return [{ id: target.model, name: target.model }];
     },
 
     /**

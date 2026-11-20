@@ -16,6 +16,7 @@ const HIT_BOX = {
 	y1: 335
 };
 const DRAG_THRESHOLD = 5;
+const MIN_REACHABLE_PX = 24;
 const SLINGSHOT_DOUBLE_MS = 200;
 const PET_REF_WIDTH = 462;
 const ROUTE_SEGMENT = "/dsh-pet-7340";
@@ -33,6 +34,7 @@ function routePathOf(baseURI) {
 	return mountPrefixOf(baseURI) + ROUTE_SEGMENT;
 }
 const ROUTE_PATH = routePathOf(typeof document === "undefined" ? void 0 : document.baseURI);
+const PET_ALPHA_FIX_ENABLED = false;
 const ANIMATION_EXT = ".webm";
 
 //#endregion
@@ -236,6 +238,35 @@ const anchorPixel = (o) => {
 			y: bottom
 		};
 	}
+};
+/** 单轴钳制：窗口比工作区还大（max < min）时贴住起点，与窗口管理器的行为一致。 */
+const clampAxis = (want, min, max) => Math.min(Math.max(want, min), Math.max(min, max));
+const fitWindowInArea = (o) => {
+	const wantX = o.bodyX - o.insetX;
+	const wantY = o.bodyY - o.insetY;
+	if (!o.area) return {
+		x: wantX,
+		y: wantY,
+		offsetX: o.insetX,
+		offsetY: o.insetY
+	};
+	const area = o.area;
+	const reach = o.reach ?? {
+		left: 0,
+		right: 0,
+		top: 0,
+		bottom: 0
+	};
+	const bodyX = clampAxis(o.bodyX, area.x - reach.left, rectRight(area) - o.bodyWidth + reach.right);
+	const bodyY = clampAxis(o.bodyY, area.y - reach.top, rectBottom(area) - o.bodyHeight + reach.bottom);
+	const x = clampAxis(bodyX - o.insetX, area.x, rectRight(area) - o.width);
+	const y = clampAxis(bodyY - o.insetY, area.y, rectBottom(area) - o.height);
+	return {
+		x,
+		y,
+		offsetX: bodyX - x,
+		offsetY: bodyY - y
+	};
 };
 
 //#endregion
@@ -1208,26 +1239,34 @@ function readMenuItems(data, surface$1) {
 	return out;
 }
 function buildMoreBranch(items) {
-	const groups = new Map();
-	for (const item of items) {
-		const list = groups.get(item.owner);
-		if (list) list.push(item.label);
-		else groups.set(item.owner, [item.label]);
-	}
+	const labelCount = new Map();
+	for (const item of items) labelCount.set(item.label, (labelCount.get(item.label) ?? 0) + 1);
 	const children = [];
-	for (const [owner, labels] of groups) if (labels.length === 1) children.push({
-		label: labels[0],
-		action: "third-party",
-		owner
-	});
-	else children.push({
-		label: owner,
-		children: labels.map((label) => ({
-			label,
+	const branches = new Map();
+	for (const item of items) {
+		if ((labelCount.get(item.label) ?? 0) === 1) {
+			children.push({
+				label: item.label,
+				action: "third-party",
+				owner: item.owner
+			});
+			continue;
+		}
+		let branch = branches.get(item.owner);
+		if (branch === void 0) {
+			branch = {
+				label: item.owner,
+				children: []
+			};
+			branches.set(item.owner, branch);
+			children.push(branch);
+		}
+		branch.children.push({
+			label: item.label,
 			action: "third-party",
-			owner
-		}))
-	});
+			owner: item.owner
+		});
+	}
 	return children.length > 0 ? {
 		label: MORE_MENU_LABEL,
 		children
@@ -1346,7 +1385,7 @@ function buildMemeBranch(source, thumbOf) {
 //#endregion
 //#region src/shared/menu/css.ts
 const MENU_CSS = [
-	".dsh-pet-menu{position:fixed;left:0;top:0;z-index:2147483000;color:#2b2b2b;font-size:13px;line-height:1.5;",
+	".dsh-pet-menu{position:fixed;-webkit-app-region:no-drag!important;left:0;top:0;z-index:2147483000;color:#2b2b2b;font-size:13px;line-height:1.5;",
 	"font-family:'Microsoft YaHei UI','Segoe UI','PingFang SC',sans-serif;user-select:none;pointer-events:auto}",
 	".dsh-pet-menu,.dsh-pet-menu *{box-sizing:border-box}",
 	".dsh-pet-menu-column{position:absolute;min-width:150px;max-width:300px;padding:4px;",
@@ -1523,6 +1562,10 @@ function mountContextMenu(opts) {
 					showPanel(childPanel, item);
 				});
 			} else {
+				item.addEventListener("mouseenter", () => {
+					const prev = openChild.get(panel);
+					if (prev) hideChain(prev);
+				});
 				if (node.thumb) {
 					const thumb = document.createElement("img");
 					thumb.className = "dsh-pet-menu-thumb";
@@ -1680,13 +1723,6 @@ function targetSize(width, height, maxSide = IMAGE_MAX_SIDE) {
 		height: Math.max(1, Math.round(height * scale))
 	};
 }
-/**
-* 把文件解码成 `<img>`。
-*
-* 用 `FileReader` 的 data URL 而不是 `URL.createObjectURL`：桌面 helper 的 CSP 是
-* `img-src 'self' http: https: data:`，不含 `blob:`，objectURL 在那边会被拦成 onerror
-* （表现为"这个文件解不出图片"，而浏览器端正常）。
-*/
 function loadImage(file) {
 	return new Promise((resolve, reject) => {
 		const reader = new FileReader();
@@ -1705,7 +1741,6 @@ function loadImage(file) {
 		reader.readAsDataURL(file);
 	});
 }
-/** 字节 → 规范 base64（分块，避免 String.fromCharCode 参数过多爆栈）。 */
 function bytesToBase64(bytes) {
 	let bin = "";
 	const CHUNK = 32768;
@@ -1767,7 +1802,7 @@ async function encodeImageFile(file) {
 //#endregion
 //#region src/shared/hear.ts
 const HEAR_SAMPLE_RATE = 16e3;
-const MAX_RECORD_MS = 24e3;
+const MAX_RECORD_MS = 2e5;
 const SILENCE_PEAK = .002;
 const MIN_RECORD_MS = 300;
 /** 等识别结果的上限（ms）：宿主自己 30s 超时，这里留点余量先等它回结构化失败。 */
@@ -2150,7 +2185,7 @@ function cameraIcon(size = 16) {
 //#endregion
 //#region src/shared/chat/styles.ts
 const CHAT_CSS = [
-	".dsh-pet-chat{position:fixed;z-index:2147483001;width:160px;max-width:80vw;",
+	".dsh-pet-chat{position:fixed;-webkit-app-region:no-drag!important;z-index:2147483001;width:160px;max-width:80vw;",
 	"background:rgba(255,255,255,.98);border:1px solid rgba(0,0,0,.12);border-radius:10px;",
 	"box-shadow:0 10px 32px rgba(0,0,0,.22);color:#2b2b2b;font-size:14px;line-height:1.5;",
 	"font-family:var(--dsh-pet-font-family,'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif);",
@@ -2375,6 +2410,32 @@ function createChatDom(opts = {}) {
 }
 
 //#endregion
+//#region src/shared/chat/enter.ts
+const COMPOSITION_SETTLE_MS = 80;
+function createCompositionWatch() {
+	let composing = false;
+	let endedAt = Number.NEGATIVE_INFINITY;
+	return {
+		start: () => {
+			composing = true;
+		},
+		end: (at) => {
+			composing = false;
+			endedAt = at;
+		},
+		isComposing: () => composing,
+		endedWithin: (now) => now - endedAt < COMPOSITION_SETTLE_MS
+	};
+}
+function decideEnter(event, watch, now) {
+	if (event.key !== "Enter" || event.shiftKey) return "ignore";
+	if (event.isComposing === true || event.keyCode === 229 || watch.isComposing()) return "ignore";
+	if (event.repeat === true) return "swallow";
+	if (watch.endedWithin(now)) return "swallow";
+	return "send";
+}
+
+//#endregion
 //#region src/shared/chat/send.ts
 /** 对话要等 LLM 生成回复，比碎碎念（30s）放宽一倍 */
 const SEND_TIMEOUT_MS = 6e4;
@@ -2445,11 +2506,14 @@ function bindSend(binding) {
 			if (!binding.isClosed()) binding.input.focus();
 		});
 	};
+	const ime = createCompositionWatch();
+	binding.input.addEventListener("compositionstart", ime.start);
+	binding.input.addEventListener("compositionend", () => ime.end(performance.now()));
 	binding.input.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") {
-			e.preventDefault();
-			doSend();
-		}
+		const action = decideEnter(e, ime, performance.now());
+		if (action === "ignore") return;
+		e.preventDefault();
+		if (action === "send") doSend();
 	});
 }
 /**
@@ -2530,8 +2594,7 @@ function mountChatDialog(opts) {
 /** 目标键的小写形式：判定与状态机共用这一份，避免两处各写一个字面量。 */
 const HEAR_KEY = "m";
 function isHearHotkey(e) {
-	if (e.ctrlKey || e.metaKey || e.altKey) return false;
-	return String(e.key).toLowerCase() === HEAR_KEY;
+	return isBareKey(e, HEAR_KEY);
 }
 function createHearHold(hooks) {
 	let holding = false;
@@ -2593,8 +2656,8 @@ const DEFAULT_PHYSICS = {
 	throwPower: 1,
 	petCollision: true,
 	hapticEnabled: true,
-	tiltGravity: false,
-	shakeThrow: false
+	tiltGravity: true,
+	shakeThrow: true
 };
 const DEFAULT_THROW_POWER = 1;
 const REST_NORMAL = 40;
@@ -3067,14 +3130,14 @@ const clickScore = (speed, size) => {
 //#region src/shared/score-popup.ts
 const SCORE_POPUP_DURATION_MS = 2200;
 const SCORE_POPUP_CSS = [
-	".dsh-pet-score{position:fixed;z-index:2147483002;min-width:120px;text-align:center;",
+	".dsh-pet-score{position:fixed;-webkit-app-region:no-drag!important;z-index:2147483002;min-width:120px;text-align:center;",
 	"background:rgba(255,255,255,.97);border:1px solid rgba(255,179,0,.35);border-radius:12px;",
 	"box-shadow:0 10px 32px rgba(0,0,0,.22);padding:8px 16px 9px;user-select:none;pointer-events:auto;",
 	"font-family:var(--dsh-pet-font-family,'ShangshouSoftCandy','Yuanti SC','YouYuan','幼圆','Comic Sans MS','PingFang SC','Microsoft YaHei',sans-serif);}",
 	".dsh-pet-score.is-in{animation:dshPetScorePop .28s ease}",
 	".dsh-pet-score-val{font-size:22px;line-height:1.25;font-weight:700;color:#ff8f00;font-variant-numeric:tabular-nums}",
 	".dsh-pet-score-sub{font-size:11px;line-height:1.4;color:rgba(43,43,43,.6);margin-top:2px;white-space:nowrap}",
-	".dsh-pet-score-burst{position:fixed;inset:0;pointer-events:none;z-index:2147483002}",
+	".dsh-pet-score-burst{position:fixed;-webkit-app-region:no-drag!important;inset:0;pointer-events:none;z-index:2147483002}",
 	".dsh-pet-score-particle{position:absolute;border-radius:50%;pointer-events:none}",
 	"@keyframes dshPetScorePop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}"
 ].join("");
@@ -3233,9 +3296,11 @@ function toWorkStatus(raw) {
 	if (!raw || typeof raw !== "object") return null;
 	const r = raw;
 	const state = r.state === null || typeof r.state === "string" && WORK_STATUS_STATES.includes(r.state) ? r.state : null;
+	const sessionId = typeof r.sessionId === "string" && r.sessionId !== "" && r.sessionId !== "unknown" ? r.sessionId : null;
 	return {
 		state,
-		task: typeof r.task === "string" ? r.task : null
+		task: typeof r.task === "string" ? r.task : null,
+		sessionId
 	};
 }
 
@@ -3312,7 +3377,9 @@ const SECTION_LEAF_NAMES = [
 	"balance",
 	"workStatus",
 	"notify",
-	"menu"
+	"menu",
+	"focusSession",
+	"env"
 ];
 /** 宠物叶子名的全集；新增宠物叶子时与 {@link PetLeafName} 一起改。 */
 const PET_LEAF_NAMES = [
@@ -3341,22 +3408,28 @@ function resolveLeafPath(path) {
 	}
 	if (!path.startsWith("pets.")) return null;
 	const rest = path.slice(5);
-	const dot = rest.lastIndexOf(".");
-	if (dot <= 0) return null;
-	const name = rest.slice(dot + 1);
+	const dot$1 = rest.lastIndexOf(".");
+	if (dot$1 <= 0) return null;
+	const name = rest.slice(dot$1 + 1);
 	return isPetLeafName(name) ? {
 		where: "pet",
 		name,
-		petId: rest.slice(0, dot)
+		petId: rest.slice(0, dot$1)
 	} : null;
 }
 function readBalance(leaf$1) {
 	const state = toBalanceState(leaf$1.data);
 	if (!state) return null;
 	const manual = leaf$1.data.manual === true;
-	return {
+	const rawPetId = leaf$1.data.petId;
+	const petId = typeof rawPetId === "string" && rawPetId !== "" ? rawPetId : void 0;
+	return petId === void 0 ? {
 		state,
 		manual
+	} : {
+		state,
+		manual,
+		petId
 	};
 }
 function readSay(leaf$1) {
@@ -3376,6 +3449,46 @@ function readSay(leaf$1) {
 }
 function readWorkStatus(leaf$1) {
 	return toWorkStatus(leaf$1.data);
+}
+function readEnv(leaf$1) {
+	if (!leaf$1.data || typeof leaf$1.data !== "object") return null;
+	const d = leaf$1.data;
+	if (typeof d.petId !== "string" || d.petId === "") return null;
+	if (typeof d.ts !== "number" || !Number.isFinite(d.ts)) return null;
+	const weather = d.weather === void 0 ? void 0 : envWeatherOf(d.weather);
+	if (d.weather !== void 0 && weather === void 0) return null;
+	return {
+		...typeof d.region === "string" && d.region !== "" ? { region: d.region } : {},
+		...typeof d.city === "string" && d.city !== "" ? { city: d.city } : {},
+		...weather === void 0 ? {} : { weather },
+		petId: d.petId,
+		ts: d.ts
+	};
+}
+/** 天气段收窄：任一必备字段缺失或非法 → undefined。 */
+function envWeatherOf(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return void 0;
+	const w = value;
+	const num = (v) => typeof v === "number" && Number.isFinite(v) ? v : void 0;
+	const city = typeof w.city === "string" ? w.city : void 0;
+	const summary = typeof w.summary === "string" ? w.summary : void 0;
+	const observedAt = typeof w.observedAt === "string" ? w.observedAt : void 0;
+	const temperatureC = num(w.temperatureC);
+	const apparentC = num(w.apparentC);
+	const humidityPercent = num(w.humidityPercent);
+	const windKph = num(w.windKph);
+	const code = num(w.code);
+	if (city === void 0 || summary === void 0 || observedAt === void 0 || temperatureC === void 0 || apparentC === void 0 || humidityPercent === void 0 || windKph === void 0 || code === void 0) return void 0;
+	return {
+		city,
+		summary,
+		temperatureC,
+		apparentC,
+		humidityPercent,
+		windKph,
+		code,
+		observedAt
+	};
 }
 function readAnim(leaf$1) {
 	if (!leaf$1.data || typeof leaf$1.data !== "object") return null;
@@ -3465,6 +3578,295 @@ async function postAction(baseUrl, body) {
 	} catch {
 		return false;
 	}
+}
+
+//#endregion
+//#region src/shared/env-icon.ts
+/** 描边线。 */
+const line = (x1, y1, x2, y2) => ({
+	kind: "line",
+	x1,
+	y1,
+	x2,
+	y2
+});
+/** 圆点（雨滴以外的雪点、冰点、太阳本体都用它）。 */
+const dot = (cx, cy, r) => ({
+	kind: "circle",
+	cx,
+	cy,
+	r
+});
+/** 标准云。 */
+const CLOUD = {
+	kind: "path",
+	d: "M8.4 18h9.1a3.5 3.5 0 0 0 .3-6.98A4.7 4.7 0 0 0 9 10.4 3.1 3.1 0 0 0 8.4 18z"
+};
+/** 小云（与太阳并排时用，避免两个主体互相压住）。 */
+const CLOUD_SM = {
+	kind: "path",
+	d: "M10.6 18.2h7.5a3 3 0 0 0 .3-6A4 4 0 0 0 11.1 11.6a2.8 2.8 0 0 0-.5 6.6z"
+};
+/** 大云（「多云」比「晴间多云」更满）。 */
+const CLOUD_LG = {
+	kind: "path",
+	d: "M7.6 18.4h10.2a3.8 3.8 0 0 0 .4-7.6A5 5 0 0 0 8.6 10.2 3.4 3.4 0 0 0 7.6 18.4z"
+};
+/** 完整太阳：本体 + 八道光线。 */
+const SUN = [
+	dot(12, 12, 4),
+	line(12, 3.4, 12, 5.4),
+	line(12, 18.6, 12, 20.6),
+	line(3.4, 12, 5.4, 12),
+	line(18.6, 12, 20.6, 12),
+	line(5.9, 5.9, 7.3, 7.3),
+	line(18.2, 5.9, 16.7, 7.3),
+	line(5.9, 18.2, 7.3, 16.7),
+	line(18.2, 18.2, 16.7, 16.7)
+];
+/** 角上一轮小太阳（与云组合时只留四道光线）。 */
+const SUN_CORNER = [
+	dot(8, 7.6, 2.5),
+	line(8, 3.1, 8, 4.6),
+	line(3.5, 7.6, 5, 7.6),
+	line(4.9, 4.5, 5.9, 5.5),
+	line(11.1, 4.5, 10.1, 5.5)
+];
+/** 两条雾线。 */
+const FOG = [line(7.6, 19.4, 16.4, 19.4), line(9.2, 21.4, 14.8, 21.4)];
+/** 短斜线（毛毛雨）。 */
+const DRIZZLE_2 = [line(10, 19.4, 9.4, 20.9), line(13.4, 19.4, 12.8, 20.9)];
+const DRIZZLE_3 = [
+	line(9.4, 19.4, 8.8, 21),
+	line(12, 19.4, 11.4, 21),
+	line(14.6, 19.4, 14, 21)
+];
+const DRIZZLE_4 = [
+	line(8.6, 19.4, 8.1, 20.6),
+	line(11, 19.4, 10.5, 20.6),
+	line(13.4, 19.4, 12.9, 20.6),
+	line(15.8, 19.4, 15.3, 20.6)
+];
+/** 长斜线（雨）。 */
+const RAIN_3 = [
+	line(9.4, 19.4, 8.4, 21.8),
+	line(12, 19.4, 11, 21.8),
+	line(14.6, 19.4, 13.6, 21.8)
+];
+const RAIN_4 = [
+	line(8.6, 19.2, 7.5, 22),
+	line(11.2, 19.2, 10.1, 22),
+	line(13.8, 19.2, 12.7, 22),
+	line(16.4, 19.2, 15.3, 22)
+];
+const RAIN_5 = [
+	line(7.6, 19, 6.6, 21.6),
+	line(9.8, 19, 8.8, 21.6),
+	line(12, 19, 11, 22),
+	line(14.2, 19, 13.2, 21.6),
+	line(16.4, 19, 15.4, 21.6)
+];
+/** 雪点：三颗 / 五颗 / 六颗，表示小、中、大雪。 */
+const SNOW_3 = [
+	dot(9.6, 20.4, .95),
+	dot(12.4, 21.4, .95),
+	dot(15.2, 20.4, .95)
+];
+const SNOW_5 = [
+	dot(8.6, 19.8, .8),
+	dot(11.2, 20.8, .8),
+	dot(13.6, 19.8, .8),
+	dot(16, 20.8, .8),
+	dot(13.6, 22, .8)
+];
+const SNOW_6 = [
+	dot(8, 19.6, .75),
+	dot(10.4, 20.6, .75),
+	dot(12.8, 19.6, .75),
+	dot(15.2, 20.6, .75),
+	dot(17.6, 19.6, .75),
+	dot(12.8, 21.8, .75)
+];
+/** 雪粒：两颗小点。 */
+const GRAIN = [dot(10.4, 20.6, .7), dot(13.6, 21.2, .7)];
+/** 冰点：冻雨 / 冻毛毛雨 / 雾凇的标记。 */
+const ICE = [dot(18.6, 20.2, .95)];
+/** 闪电。 */
+const BOLT = {
+	kind: "path",
+	d: "M12.8 12.6l-2.6 4.6h2.2l-1.1 3.8 4.2-5.6h-2.2l1.4-2.8z"
+};
+/** 冰雹：一颗 / 两颗。 */
+const HAIL_1 = [dot(9.4, 21.2, .9)];
+const HAIL_2 = [dot(9.4, 21.2, .9), dot(14.4, 21.6, .9)];
+/** 码 → 形状；同组用不同数量区分强度，保证 27 个码两两不同。 */
+const ICONS = new Map([
+	[0, SUN],
+	[1, [...SUN_CORNER, CLOUD_SM]],
+	[2, [...SUN_CORNER, CLOUD_LG]],
+	[3, [CLOUD]],
+	[45, [CLOUD, ...FOG]],
+	[48, [
+		CLOUD,
+		...FOG,
+		...ICE
+	]],
+	[51, [CLOUD, ...DRIZZLE_2]],
+	[53, [CLOUD, ...DRIZZLE_3]],
+	[55, [CLOUD, ...DRIZZLE_4]],
+	[56, [
+		CLOUD,
+		...DRIZZLE_3,
+		...ICE
+	]],
+	[57, [
+		CLOUD,
+		...DRIZZLE_4,
+		...ICE
+	]],
+	[61, [CLOUD, ...RAIN_3]],
+	[63, [CLOUD, ...RAIN_4]],
+	[65, [CLOUD, ...RAIN_5]],
+	[66, [
+		CLOUD,
+		...RAIN_3,
+		...ICE
+	]],
+	[67, [
+		CLOUD,
+		...RAIN_4,
+		...ICE
+	]],
+	[71, [CLOUD, ...SNOW_3]],
+	[73, [CLOUD, ...SNOW_5]],
+	[75, [CLOUD, ...SNOW_6]],
+	[77, [CLOUD, ...GRAIN]],
+	[80, [
+		...SUN_CORNER,
+		CLOUD_SM,
+		...DRIZZLE_2
+	]],
+	[81, [
+		...SUN_CORNER,
+		CLOUD_SM,
+		...DRIZZLE_3
+	]],
+	[82, [
+		...SUN_CORNER,
+		CLOUD_SM,
+		...DRIZZLE_4
+	]],
+	[85, [
+		...SUN_CORNER,
+		CLOUD_SM,
+		...SNOW_3
+	]],
+	[86, [
+		...SUN_CORNER,
+		CLOUD_SM,
+		...SNOW_5
+	]],
+	[95, [CLOUD, BOLT]],
+	[96, [
+		CLOUD,
+		BOLT,
+		...HAIL_1
+	]],
+	[99, [
+		CLOUD,
+		BOLT,
+		...HAIL_2
+	]]
+]);
+/** 表外的码用的兜底图形（一朵云，与「阴」同形）。 */
+const FALLBACK = [CLOUD];
+function envIconShapes(code) {
+	return ICONS.get(code) ?? FALLBACK;
+}
+
+//#endregion
+//#region src/shared/env-view.ts
+/** 数值转口语：整数不带小数点，非整数留一位（与时间行同一口径）。 */
+function numText(value) {
+	return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+/** 观测时刻取时分：`2026-11-12T08:45` → `08:45`；形状不对时 undefined。 */
+function observedTimeOf(raw) {
+	if (!raw.includes("T")) return void 0;
+	const time = raw.split("T")[1] ?? "";
+	return time.slice(0, 5) === "" ? void 0 : time.slice(0, 5);
+}
+function envBubbleView(state) {
+	const place = [state.region ?? "", state.city ?? ""].filter((part) => part !== "").join("");
+	const title = place === "" ? "天气" : place;
+	const weather = state.weather;
+	if (weather === void 0) return {
+		title,
+		rows: [],
+		emptyText: "暂时查不到天气"
+	};
+	const observed = observedTimeOf(weather.observedAt);
+	return {
+		title,
+		icon: envIconShapes(weather.code),
+		temperature: numText(weather.temperatureC) + "°C",
+		summary: weather.summary,
+		rows: [
+			{
+				label: "体感",
+				value: numText(weather.apparentC) + "°C"
+			},
+			{
+				label: "湿度",
+				value: numText(weather.humidityPercent) + "%"
+			},
+			{
+				label: "风速",
+				value: numText(weather.windKph) + " km/h"
+			}
+		],
+		...observed === void 0 ? {} : { footer: "观测 " + observed }
+	};
+}
+
+//#endregion
+//#region src/shared/bubble-hold.ts
+const BUBBLE_HOLD_TAIL_MS = 1500;
+const BUBBLE_HOLD_MAX_MS = 5e4;
+function utteranceToHold(event) {
+	return {
+		kind: event.kind === "start" ? "hold" : "release",
+		seq: event.seq
+	};
+}
+const BUBBLE_HOLD_IDLE = {
+	on: false,
+	delayMs: null,
+	holdSeq: null
+};
+function reduceBubbleHold(state, event) {
+	if (event.kind === "show") return {
+		delayMs: Math.max(0, event.durationMs),
+		holdSeq: null,
+		on: true
+	};
+	if (event.kind === "clear") return BUBBLE_HOLD_IDLE;
+	if (event.kind === "hide") return state.on ? BUBBLE_HOLD_IDLE : state;
+	if (!state.on) return state;
+	if (event.kind === "hold") {
+		if (state.holdSeq === event.seq) return state;
+		return {
+			delayMs: BUBBLE_HOLD_MAX_MS,
+			holdSeq: event.seq,
+			on: true
+		};
+	}
+	if (state.holdSeq !== event.seq) return state;
+	return {
+		delayMs: BUBBLE_HOLD_TAIL_MS,
+		holdSeq: null,
+		on: true
+	};
 }
 
 //#endregion
@@ -4374,10 +4776,10 @@ const TOOLTIP_CSS = [
 //#region src/shared/voice.ts
 /** 当前音色；空串 = 不指定，由宿主用默认音色。 */
 let voiceName = "";
-/** 播报总开关；只有成品配置明确为 true 才播。 */
-let voiceEnabled = false;
 /** 播放音量系数（0–1，1 = 最大音量）；两端共用，只作用于播放，不影响已合成好的音频。 */
 let voiceVolume = 1;
+/** 工作状态播报开关；只有成品配置明确为 true 才念。 */
+let notifyEnabled = false;
 /** 本端是网页端还是桌面端；`null` = 还没声明，此时不按叶子播放。 */
 let surface = null;
 /** 接口基址：网页端是同源前缀，桌面端由 `setVoiceBase` 换成 bridge 地址。 */
@@ -4388,13 +4790,18 @@ let configLoaded = false;
 let voiceState = "idle";
 /** 状态订阅者：两端的说话气泡据此渲染图标。 */
 const stateListeners = new Set();
+/** 播报开始/结束的订阅者：说话气泡据此挂起与收尾。 */
+const utteranceListeners = new Set();
+/** 播报序号；每次决定要念一句就自增，用来让气泡丢掉迟到的「上一句播完了」。 */
+let utteranceSeq = 0;
 /**
 * 客户端等合成结果的上限（ms）。
 *
-* 比宿主侧第三方合成的超时（15s）再宽一点：让宿主先超时并回结构化失败，
+* 比宿主侧的总超时（28s）再宽一点：让宿主先超时并回结构化失败，
 * 客户端这道只是兜底，避免上游挂住时气泡上的转圈永远停不下来。
 */
-const SPEAK_TIMEOUT_MS = 2e4;
+const SPEAK_TIMEOUT_MS = 3e4;
+const PLAYBACK_WAIT_MAX_MS = 6e4;
 /** 合成请求的超时信号；自动播报与手动点播共用同一份口径。 */
 function speakSignal() {
 	return AbortSignal.timeout(SPEAK_TIMEOUT_MS);
@@ -4415,17 +4822,32 @@ function subscribeVoiceState(listener) {
 		stateListeners.delete(listener);
 	};
 }
+function subscribeVoiceUtterance(listener) {
+	utteranceListeners.add(listener);
+	return () => {
+		utteranceListeners.delete(listener);
+	};
+}
+/** 广播一次播报事件；单个订阅者抛错不能挡住其余订阅者。 */
+function emitUtterance(event) {
+	for (const listener of utteranceListeners) listener(event);
+}
 function setVoiceBase(base) {
 	if (typeof base === "string" && base) voiceBase = base;
 }
 function setSurface(next) {
 	if (next === "web" || next === "desktop") surface = next;
 }
-function setVoiceConfig(name, enabled, volume) {
+function setVoiceConfig(name, volume) {
 	voiceName = typeof name === "string" ? name : "";
-	voiceEnabled = enabled === true;
 	voiceVolume = clampVolume(volume);
 	configLoaded = true;
+}
+function setVoiceNotifyEnabled(on) {
+	notifyEnabled = on === true;
+}
+function isVoiceNotifyEnabled() {
+	return notifyEnabled;
 }
 /** 把音量收敛到 0–1；非数值按最大音量（1）处理——脏配置不该把声音悄悄变成 0。 */
 function clampVolume(value) {
@@ -4440,8 +4862,8 @@ async function loadConfigOnce() {
 		const body = await response.json();
 		const main = body?.main;
 		voiceName = typeof main?.voiceName === "string" ? main.voiceName : "";
-		voiceEnabled = main?.voiceEnabled === true;
 		voiceVolume = clampVolume(main?.voiceVolume);
+		setVoiceNotifyEnabled(main?.voiceNotifyEnabled);
 		configLoaded = true;
 	} catch {}
 }
@@ -4455,20 +4877,97 @@ function playSayVoice(say) {
 		setVoiceState("idle");
 		return;
 	}
-	speakIfEnabled(say.text);
+	speakWhenReady(say.text);
 }
-/** 确认配置后再播；桌面端首次调用会顺手拉一次 `/config`。 */
-async function speakIfEnabled(text) {
+/**
+* 配置就绪后开播；桌面端首次调用会顺手拉一次 `/config`。
+*
+* @param text - 要念的整句。
+* @param canPlayHidden - 页面隐藏时是否继续播；缺省 `false`（藏起来就静音）。
+*/
+async function speakWhenReady(text, canPlayHidden = false) {
 	await loadConfigOnce();
-	if (!voiceEnabled) {
-		setVoiceState("idle");
-		return;
-	}
+	const seq = ++utteranceSeq;
+	emitUtterance({
+		kind: "start",
+		seq,
+		text
+	});
 	setVoiceState("loading");
-	await speak(text);
+	try {
+		await speak(text, canPlayHidden);
+	} finally {
+		emitUtterance({
+			kind: "end",
+			seq,
+			text
+		});
+	}
 }
-/** 请求合成并播放；任何一步失败都落到 `failed`（气泡上留一个静音喇叭，而不是干脆没图标）。 */
-async function speak(text) {
+function speakNotice(text) {
+	if (text === "") return;
+	speakWhenReady(text, true);
+}
+/**
+* 等到这一句真正播完。
+*
+* `play()` 的 Promise 在「开播」时就 resolve，而气泡要的是「播完」：两者的差就是气泡提前
+* 收起的全部原因。所以这里另等收尾信号，并用 {@link PLAYBACK_WAIT_MAX_MS} 兜底。
+*
+* @param audio - 正在播的元素。
+* @param objectUrl - 收尾时要释放的 blob 地址。
+*/
+function waitForPlaybackEnd(audio, objectUrl) {
+	return new Promise((resolve) => {
+		let settled = false;
+		let timer = null;
+		const finish = () => {
+			if (settled) return;
+			settled = true;
+			if (timer !== null) clearTimeout(timer);
+			URL.revokeObjectURL(objectUrl);
+			resolve();
+		};
+		timer = setTimeout(finish, PLAYBACK_WAIT_MAX_MS);
+		timer.unref?.();
+		audio.onended = finish;
+		audio.onerror = finish;
+		audio.onpause = finish;
+	});
+}
+/** 自动播报当前正在响的那个音频：新的一句进来先掐掉旧的，熄屏醒来后攒下的一串才不会叠着响。 */
+let autoAudio = null;
+/** 自动播报世代号：合成期间可能被更新的一句顶掉，回来的旧结果直接丢弃。 */
+let autoSeq = 0;
+/** 当前这句是否允许页面隐藏时继续播；跟随 autoAudio 一起换，不做成全局开关。 */
+let autoAudioCanPlayHidden = false;
+/**
+* 掐掉当前自动播报。
+*
+* 用 pause 而不是直接丢掉引用：`waitForPlaybackEnd` 已经挂了 `onpause` 收尾，
+* 气泡能照常收起，不会等一个已经不会响的音频。
+*/
+function stopAutoAudio() {
+	const audio = autoAudio;
+	autoAudio = null;
+	autoAudioCanPlayHidden = false;
+	if (audio === null) return;
+	try {
+		audio.pause();
+	} catch {}
+}
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", () => {
+	if (document.hidden && !autoAudioCanPlayHidden) stopAutoAudio();
+});
+/**
+* 请求合成并播放；任何一步失败都落到 `failed`（气泡上留一个静音喇叭，而不是干脆没图标）。
+*
+* @param text - 要念的整句。
+* @param canPlayHidden - 页面隐藏时是否继续播；缺省 `false`。
+*/
+async function speak(text, canPlayHidden = false) {
+	const token = ++autoSeq;
+	stopAutoAudio();
 	try {
 		const response = await fetch(voiceBase + "/voice/speak", {
 			method: "POST",
@@ -4479,19 +4978,41 @@ async function speak(text) {
 			}),
 			signal: speakSignal()
 		});
+		if (token !== autoSeq) return;
 		if (!response.ok || !(response.headers.get("content-type") ?? "").includes("audio")) {
 			setVoiceState("failed");
 			return;
 		}
 		const objectUrl = URL.createObjectURL(await response.blob());
+		if (token !== autoSeq) {
+			URL.revokeObjectURL(objectUrl);
+			return;
+		}
 		const audio = new Audio(objectUrl);
 		audio.volume = voiceVolume;
-		audio.onended = () => URL.revokeObjectURL(objectUrl);
-		audio.onerror = () => URL.revokeObjectURL(objectUrl);
+		if (!canPlayHidden && typeof document !== "undefined" && document.hidden) {
+			URL.revokeObjectURL(objectUrl);
+			setVoiceState("idle");
+			return;
+		}
 		setVoiceState("ready");
-		await audio.play();
+		autoAudioCanPlayHidden = canPlayHidden;
+		autoAudio = audio;
+		try {
+			await audio.play();
+		} catch {
+			URL.revokeObjectURL(objectUrl);
+			if (autoAudio === audio) {
+				autoAudio = null;
+				autoAudioCanPlayHidden = false;
+			}
+			setVoiceState("failed");
+			return;
+		}
+		await waitForPlaybackEnd(audio, objectUrl);
+		if (autoAudio === audio) autoAudio = null;
 	} catch {
-		setVoiceState("failed");
+		if (token === autoSeq) setVoiceState("failed");
 	}
 }
 /** 手动点播时正在响的那个音频；新的一句先掐掉旧的，避免两句话叠在一起。 */
@@ -4552,6 +5073,9 @@ exports.ACCEL_GAIN_MAX = ACCEL_GAIN_MAX
 exports.ACCEL_REF = ACCEL_REF
 exports.ANIMATION_EXT = ANIMATION_EXT
 exports.BUBBLE_FONT_BASE_PX = BUBBLE_FONT_BASE_PX
+exports.BUBBLE_HOLD_IDLE = BUBBLE_HOLD_IDLE
+exports.BUBBLE_HOLD_MAX_MS = BUBBLE_HOLD_MAX_MS
+exports.BUBBLE_HOLD_TAIL_MS = BUBBLE_HOLD_TAIL_MS
 exports.BUBBLE_METRICS = BUBBLE_METRICS
 exports.BUBBLE_OVERLAP_RATIO = BUBBLE_OVERLAP_RATIO
 exports.CANVAS_H = CANVAS_H
@@ -4585,13 +5109,16 @@ exports.MEME_BUBBLE_CLASS = MEME_BUBBLE_CLASS
 exports.MEME_BUBBLE_CSS = MEME_BUBBLE_CSS
 exports.MEME_IMG_CLASS = MEME_IMG_CLASS
 exports.MENU_CSS = MENU_CSS
+exports.MIN_REACHABLE_PX = MIN_REACHABLE_PX
 exports.MIN_SPAN_MS = MIN_SPAN_MS
 exports.MORE_MENU_LABEL = MORE_MENU_LABEL
 exports.NOTIFY_ICONS = NOTIFY_ICONS
 exports.PEAK_WEIGHT = PEAK_WEIGHT
+exports.PET_ALPHA_FIX_ENABLED = PET_ALPHA_FIX_ENABLED
 exports.PET_BOUNCE_E = PET_BOUNCE_E
 exports.PET_DISPLAYS = PET_DISPLAYS
 exports.PET_REF_WIDTH = PET_REF_WIDTH
+exports.PLAYBACK_WAIT_MAX_MS = PLAYBACK_WAIT_MAX_MS
 exports.QUOTA_CRIT_PERCENT = QUOTA_CRIT_PERCENT
 exports.QUOTA_WARN_PERCENT = QUOTA_WARN_PERCENT
 exports.RELEASE_STALE_MS = RELEASE_STALE_MS
@@ -4660,10 +5187,13 @@ exports.displayOfHotkey = displayOfHotkey
 exports.distToRectSq = distToRectSq
 exports.dragHasFiles = dragHasFiles
 exports.dueLabel = dueLabel
+exports.envBubbleView = envBubbleView
+exports.envIconShapes = envIconShapes
 exports.estimateReleaseVelocity = estimateReleaseVelocity
 exports.fetchState = fetchState
 exports.firstImageFile = firstImageFile
 exports.firstImageFromClipboard = firstImageFromClipboard
+exports.fitWindowInArea = fitWindowInArea
 exports.flattenConfigPets = flattenConfigPets
 exports.flattenCounters = flattenCounters
 exports.fontStackOf = fontStackOf
@@ -4684,6 +5214,7 @@ exports.isSleepAllowedAction = isSleepAllowedAction
 exports.isSleepHotkey = isSleepHotkey
 exports.isTodoHotkey = isTodoHotkey
 exports.isTypingTarget = isTypingTarget
+exports.isVoiceNotifyEnabled = isVoiceNotifyEnabled
 exports.isWebVisible = isWebVisible
 exports.landingSquash = landingSquash
 exports.loadTodos = loadTodos
@@ -4716,6 +5247,7 @@ exports.quotaTone = quotaTone
 exports.randomBetween = randomBetween
 exports.readAnim = readAnim
 exports.readBalance = readBalance
+exports.readEnv = readEnv
 exports.readLock = readLock
 exports.readMenuItems = readMenuItems
 exports.readPosition = readPosition
@@ -4728,6 +5260,7 @@ exports.rectAtPoint = rectAtPoint
 exports.rectBottom = rectBottom
 exports.rectRight = rectRight
 exports.rectsOverlap = rectsOverlap
+exports.reduceBubbleHold = reduceBubbleHold
 exports.regionArea = regionArea
 exports.regionHoleRatio = regionHoleRatio
 exports.remainingLabel = remainingLabel
@@ -4743,6 +5276,7 @@ exports.sendChat = sendChat
 exports.setSurface = setSurface
 exports.setVoiceBase = setVoiceBase
 exports.setVoiceConfig = setVoiceConfig
+exports.setVoiceNotifyEnabled = setVoiceNotifyEnabled
 exports.slingshotPower = slingshotPower
 exports.slingshotRefDist = slingshotRefDist
 exports.slingshotVelocity = slingshotVelocity
@@ -4751,10 +5285,12 @@ exports.softClampSpeed = softClampSpeed
 exports.sortTodoItems = sortTodoItems
 exports.spanText = spanText
 exports.spawnScoreBurst = spawnScoreBurst
+exports.speakNotice = speakNotice
 exports.speakText = speakText
 exports.springStep = springStep
 exports.squashScale = squashScale
 exports.subscribeVoiceState = subscribeVoiceState
+exports.subscribeVoiceUtterance = subscribeVoiceUtterance
 exports.takeChanged = takeChanged
 exports.throwBounds = throwBounds
 exports.throwBoundsIn = throwBoundsIn
@@ -4772,6 +5308,7 @@ exports.translateRects = translateRects
 exports.trimTrail = trimTrail
 exports.truncate = truncate
 exports.urgentWindow = urgentWindow
+exports.utteranceToHold = utteranceToHold
 exports.whisperBubbleView = whisperBubbleView
 exports.windowsHandler = windowsHandler
 return exports;

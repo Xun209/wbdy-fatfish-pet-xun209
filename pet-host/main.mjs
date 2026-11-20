@@ -368,14 +368,20 @@ async function main() {
   const guard = createGuard({ portRef, token });
   // 模型後端：碎碎念與對話都要它。沒有金鑰時服務照常起（那兩個功能會明確失敗）。
   const ai = createAi({ stateDir, logger });
+  // 等第一次解析完成再往下走：啟動摘要要能報出「實際接上哪個後端」，
+  // 不然使用者看到「未接」而實際上只是解析還沒回來。
+  await ai.ready();
   const aiInfo = ai.describe();
   if (aiInfo.ready) {
     logger.info(`模型後端：${aiInfo.provider}/${aiInfo.model}（${aiInfo.baseUrl}）← ${aiInfo.source}`);
   } else {
     const aiConfigPath = join(stateDir, 'pet-host', 'ai.json');
-    logger.warn(`模型後端未接：碎碎念與對話會明確失敗。可設環境變數 WORKBUDDY_PET_AI_API_KEY，或在 ${aiConfigPath} 寫入設定。`);
+    logger.warn(
+      `模型後端未接：碎碎念與對話會明確失敗。可設環境變數 WORKBUDDY_PET_AI_API_KEY，或在 ${aiConfigPath} 寫入設定。` +
+        (aiInfo.error ? `（本次嘗試的原因：${aiInfo.error}）` : ''),
+    );
   }
-  const host = createHostContext({ logger, routes, portRef, originRef, ai });
+  const host = createHostContext({ logger, routes, portRef, originRef, ai, token });
 
   let shuttingDown = false;
   const server = await listen({

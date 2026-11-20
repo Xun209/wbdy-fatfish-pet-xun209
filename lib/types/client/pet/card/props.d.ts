@@ -7,7 +7,7 @@
 import type * as ReactNS from 'react';
 import type { BalanceState } from '../../../shared/balance/index.ts';
 import type { PetCollisionSlot } from '../../../shared/physics.ts';
-import type { LockState, PositionMode, SayCue, PetFacing, SleepState } from '../../../shared/state.ts';
+import type { LockState, PositionMode, SayCue, PetFacing, SleepState, EnvState } from '../../../shared/state.ts';
 import type { MenuMoreItem } from '../../../shared/menu.ts';
 import type { WorkStatusSnapshot } from '../../../shared/work-status.ts';
 import type { RuntimePet } from '../types.ts';
@@ -23,10 +23,18 @@ export interface PetCardProps {
     balanceNoticeTick: number;
     /** 本次余额是否由用户手动请求；手动请求即使关闭 balanceEnabled 也答复。 */
     balanceManual: boolean;
+    /** 本次余额「给谁看」：有值且不是本宠物时只更新数据、不弹气泡；缺省 = 不分组。 */
+    balancePetId?: string;
+    /** 最近一次环境结果；只有 petId 与本宠物相符时容器才传（环境是机器级事实，一只一份气泡）。 */
+    env?: EnvState;
+    /** 环境叶子变化次数。 */
+    envTick: number;
     /** 工作状态快照。 */
     workStatus: WorkStatusSnapshot | null;
     /** 工作状态变化次数。 */
     workStatusTick: number;
+    /** 点工作气泡时跳到它所属会话；缺省即气泡不可点（桌面端由容器转发）。 */
+    onFocusSession?: (sessionId: string) => void;
     /** 本宠物的说话指令；kind 为 clear 时收起气泡，其余弹气泡。 */
     say?: SayCue & {
         seq: number;

@@ -62,6 +62,10 @@ export interface Animations {
     /** 睡觉动作套（可选）：没写 = 该条目没有睡觉功能，右键菜单不出现「睡觉」。
      *  写了就「整套随机 → 段内随机」取，结构见 {@link SleepSet}。 */
     sleep?: SleepSet[];
+    /** 内置玩法「吃白饭」的动画（可选）：键名即玩法 id，值是**恰好 5 个**动画名，
+     *  按位置对应：跑向屏幕底部、追饭时的侧身跑、到位后等开饭、吃到碗饭、吃饭团。
+     *  不写 = 该条目没有这个玩法；槽位数与顺序是玩法契约（代码按索引取），名字只是素材文件名。 */
+    baifan?: string[];
 }
 /** 一只宠物（与 config.jsonc 的 pets[i] 同形，position 嵌套）。
  *  可选段是渲染期派生或文件宠物专用：条目级字段由合并器在拍平时吹进每只实例，多实例共享；
@@ -161,12 +165,12 @@ export interface PhysicsParams {
     throwPower: number;
     /** 多宠物互相碰撞开关：true（默认）= 飞行中的宠物撞到其它宠物时按动量守恒弹开；false = 互相穿过 */
     petCollision: boolean;
-    /** 倾斜控制重力：true = 手机倾斜方向代替固定向下的重力方向（大小仍由 gravity 决定，竖直时取满值；
-     *  gravity 为 0 时倾斜没有可用的量，等同关闭）；false（默认）= 重力恒竖直向下。
-     *  仅浏览器半侧生效，且传感器只在安全上下文（HTTPS / localhost）可用；缺键按 false。 */
+    /** 倾斜控制重力：true（默认）= 手机倾斜方向代替固定向下的重力方向（大小仍由 gravity 决定，竖直时取满值；
+     *  gravity 为 0 时倾斜没有可用的量，等同关闭）；false = 重力恒竖直向下。
+     *  仅浏览器半侧生效，且传感器只在安全上下文（HTTPS / localhost）可用；缺键按 true。 */
     tiltGravity?: boolean;
-    /** 摇一摇抛出：true = 摇一摇沿甩动方向把宠物甩出去（力度 = 基准 × throwPower），与重力大小无关，
-     *  所以 gravity 为 0 时也能用；false（默认）= 不读加速度计。同样只在安全上下文可用。缺键按 false。 */
+    /** 摇一摇抛出：true（默认）= 摇一摇沿甩动方向把宠物甩出去（力度 = 基准 × throwPower），与重力大小无关，
+     *  所以 gravity 为 0 时也能用；false = 不读加速度计。同样只在安全上下文可用。缺键按 true。 */
     shakeThrow?: boolean;
     /** 碰撞触觉反馈：true（默认）时撞墙 / 落地 / 撞顶与宠物互撞各震一下。
      *  仅浏览器半侧生效，且要求环境有 Vibration API——iOS 与桌面端没有，静默跳过。
@@ -191,6 +195,9 @@ export interface FontConfig {
 export interface ClientConfig {
     /** 系统通知总开关：true = 对话完成 / 生成失败 / 输出截断 / 权限申请 / 用户选择时弹出通知；缺失即配置错误 */
     notificationsEnabled: boolean;
+    /** 前台聚焦时也提醒：true = 页面可见且持有焦点时照常弹通知、照常播报工作状态语音；
+     *  false（默认）= 只在走开或被遮住时提醒。缺这个键按 false 处理，旧配置行为不变。 */
+    notifyWhenFocused: boolean;
     /** 点击音效开关：true = 点击宠物时播放内置 click-duck.wav（音量 0.5、100ms 内去重），false = 静音。
      *  内置默认 false（默认静音，不突袭既有用户）。只读 main 条目这一份，pet pack 不单独覆盖。 */
     clickSoundEnabled: boolean;

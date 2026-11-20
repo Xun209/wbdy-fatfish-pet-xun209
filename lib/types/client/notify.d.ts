@@ -1,5 +1,6 @@
 /**
- * 系统通知引擎（浏览器半侧）：消费宿主生成的通知帧，按「聚焦不弹」发系统级 toast。
+ * 系统通知引擎（浏览器半侧）：消费宿主生成的通知帧，按「聚焦不弹」发系统级 toast；
+ * `main.notifyWhenFocused` 打开时不再做这道判断。
  * 这是独立于宠物的能力，只随 DSH 网页端走——桌面模式不做宠物无关的功能。
  * 不负责产生帧：宿主监听 DSH 事件并写进 `/state`，容器统一轮询发现 counter 变化后调 `notifyFromFrame`；
  * 中断 / 活动门等过滤也已在宿主侧完成。
@@ -7,6 +8,21 @@
  * 以及 app.ts 注入的会话跳转与命名服务（取不到时只降级，不影响弹窗）。
  * @module dsh-pet/src/client/notify
  */
+/** 用户是否在看本页（页面可见且持有焦点）。
+ *  系统通知与工作状态播报共用这一条：用户在看就不打扰，走开了才提醒。
+ *  {@link isNotifyWhenFocused} 打开时调用方不再走这条路。 */
+export declare function isPageActive(): boolean;
+/**
+ * 这一次要不要提醒。
+ *
+ * 总开关由调用方先判（系统通知与工作状态播报各有一个）；这里只回答「前台提醒」这一层：
+ * 打开就提醒，关闭时只在用户走开 / 页面不可见时才提醒。
+ *
+ * @param whenFocused - 成品配置的 `main.notifyWhenFocused`。
+ * @param pageActive - 用户是否正看着本页（{@link isPageActive}）。
+ * @returns 该提醒时为 true。
+ */
+export declare function shouldRemind(whenFocused: boolean, pageActive: boolean): boolean;
 /** 图标 URL 表；文件名以 shared 为单一来源，设置页的测试通知也用它。 */
 export declare const NOTIFY_ICONS: {
     readonly done: string;
@@ -16,6 +32,8 @@ export declare const NOTIFY_ICONS: {
     readonly question: string;
     readonly test: string;
 };
+/** 前台聚焦时是否也提醒；系统通知与工作状态播报共用这一条。 */
+export declare function isNotifyWhenFocused(): boolean;
 /** 会话跳转与命名：由 app.ts 注入，取不到服务时退化为不跳会话、不认会话名。 */
 export interface SessionNavigator {
     openSession(sessionId: string): void;
@@ -31,10 +49,15 @@ export interface SessionNavigator {
  */
 export declare function sessionTitleFrom(navigator: SessionNavigator | undefined, sessionId: string | undefined): string | undefined;
 /**
- * 点通知：先页内切到那条会话，再聚焦页面，最后请桌面壳把主窗口叫回前台。
+ * 切到指定会话，并把窗口叫到前台。
+ *
  * 先切会话再叫窗口，用户看到窗口的那一刻就是目标会话；`dsh://open` 只在 Electron 宿主里发，
- * 浏览器里导航该协议会弹拦截框。`sessionId` 缺失时只跳过切换，其余照旧。
+ * 浏览器里导航该协议会弹拦截框。
+ *
+ * @param sessionId - 目标会话；缺省只尝试叫窗口。会话已删或服务缺失时静默跳过切换。
  */
+export declare function jumpToSession(sessionId?: string): void;
+/** 点通知：收起弹窗并跳到它指的那条会话（跳转细化见 {@link jumpToSession}）。 */
 export declare function wireNotificationClick(n: Notification, sessionId?: string): void;
 /** 申请通知权限的结果；失败时带原因与可选文案，供设置页红字展示。 */
 export type PermissionResult = {
@@ -49,7 +72,7 @@ export type PermissionResult = {
  * 失败原因：`unsupported` 无 Notification、`denied` 已被阻止、`rejected` 询问时选了阻止、`error` 申请异常。
  */
 export declare function requestNotificationPermission(): Promise<PermissionResult>;
-/** 重读总开关（设置页保存开关后调用）；之后新触发的通知按新值执行，无需刷新页面。 */
+/** 重读两个开关（设置页保存开关后调用）；之后新触发的通知按新值执行，无需刷新页面。 */
 export declare function reloadNotifications(): Promise<void>;
 /** 一帧通知 → toast；由容器统一轮询 `/state` 发现 `sections.notify` 变化后调用。 */
 export declare function notifyFromFrame(frame: unknown): void;

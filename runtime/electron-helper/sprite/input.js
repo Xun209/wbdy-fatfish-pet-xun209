@@ -104,7 +104,6 @@ Object.assign(PetSprite.prototype, {
     this.dragState.sling = sling;
     this.dragState.anchorX = this.pos.x + this.halfW;
     this.dragState.anchorY = this.pos.y + this.halfH;
-    // 舞台「拍平」不能在这里做：纯点击会让人物瞬移上移再落下，只有拖拽超过阈值才拍平。
   },
 
   onPointerMove(e) {
@@ -116,8 +115,6 @@ Object.assign(PetSprite.prototype, {
     if (!d.dragging) {
       if (Math.hypot(dx, dy) < S.DRAG_THRESHOLD) return;
       d.dragging = true;
-      // 真正开始拖拽才把舞台拍平（人物随光标拿起）
-      this.stage.style.transform = 'none';
       // 睡觉：位置照常跟手，但不换拖拽动画——睡姿循环整段归睡觉状态机，顶掉就回不来了。
       if (this.animations.drag.length && !this.sleeping) {
         this.playOnce(S.pick(this.animations.drag));
@@ -140,19 +137,18 @@ Object.assign(PetSprite.prototype, {
     d.dragging = false;
     this.hit.classList.remove('dragging');
     this.stopDragFollow(); // 弹簧跟随立即停（位置定格在实时 this.pos）
-    this.stage.style.transform = 'translateY(' + this.bottomPad + 'px)';
     this.syncInputBusy(); // 拖拽结束：交还给常规判定（幂等，非拖拽时多调一次不发 IPC）
     // 提示复位：点击/拖拽期间收起，指针仍在命中区内就恢复。用 hitRect 而不是 getBoundingClientRect
     // ——命中区是窗口坐标里的权威几何，与 onMouseMove 同源。必须留在 syncInputBusy() 之后：
     // 源码守卫只扫本函数开头 400 字符找上报调用，插到前面会把上报挤出窗口。
     if (e && Number.isFinite(e.clientX)) {
       const r = this.hitRect;
-      const px = e.clientX - this.margin.l;
-      const py = e.clientY - this.margin.t;
+      const px = e.clientX - this.winOffset.x;
+      const py = e.clientY - this.winOffset.y;
       // 先按松手位置更新光标再摆位/显示，否则会重现拖拽前的位置（与浏览器 placeTip 同一处理）
       this.tipCursor = {
-        x: this.pos.x - this.margin.l + e.clientX,
-        y: this.pos.y - this.margin.t + e.clientY,
+        x: this.pos.x - this.winOffset.x + e.clientX,
+        y: this.pos.y - this.winOffset.y + e.clientY,
       };
       this.setTip(px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h);
     }
@@ -237,14 +233,22 @@ Object.assign(PetSprite.prototype, {
   /**
    * 本窗口是否必须保持可交互（= 我正在用这个窗口的鼠标输入）。
    *
-   * 来源是拖拽中 / 右键菜单开着 / 对话或待办弹窗开着（外加可点的余额气泡）：它们都靠窗口级鼠标事件驱动，
+   * 来源是拖拽中 / 右键菜单开着 / 对话或待办弹窗开着（外加可点的余额、工作与说话气泡）：它们都靠窗口级鼠标事件驱动，
    * 窗口一变回穿透输入链就断（拖拽定格、松手也没人报 pointerup）。
    * 这是渲染端专有的知识，主进程无从推断；同时上报控件矩形，菜单/聊天框外仍继续穿透。
    */
   inputBusy() {
-    // 可点的余额气泡是第四个来源：它长在窗口里、靠窗口级 click 触发，却悬在平时穿透的余量区，
-    // 正需要借 busy + 控件矩形把它圈出来。
-    return this.dragState.active || this.menuOpen || this.chatOpen || this.todoOpen || this.balanceClickable();
+    // 可点的气泡（余额翻页、工作气泡跳会话、说话气泡戳破）同样是来源：它们长在窗口里、靠窗口级 click 触发，
+    // 却悬在平时穿透的余量区，正需要借 busy + 控件矩形把它们圈出来。
+    return (
+      this.dragState.active ||
+      this.menuOpen ||
+      this.chatOpen ||
+      this.todoOpen ||
+      this.balanceClickable() ||
+      this.workClickable() ||
+      this.whisperClickable()
+    );
   },
 
   /** 余额气泡当前有几页：规则归共享层（与每页内容同源），这里只补「还没有结果」的兜底。 */
@@ -257,6 +261,16 @@ Object.assign(PetSprite.prototype, {
   balanceClickable() {
     if (!this.bubbleOn || this.balanceWrap) return false;
     return this.balancePageCount() > 1;
+  },
+
+  /** 工作气泡此刻是否可点：它正占着气泡槽，且拿到了可跳转的会话。 */
+  workClickable() {
+    return this.bubbleSlot === 'work' && !!this.workSessionId;
+  },
+
+  /** 说话气泡此刻是否可点：它正占着气泡槽就有内容，点下去是戳破。 */
+  whisperClickable() {
+    return this.bubbleSlot === 'whisper' && !!this.whisperView;
   },
 
   /**
@@ -336,18 +350,18 @@ Object.assign(PetSprite.prototype, {
       return;
     }
     const r = this.hitRect;
-    // forwarded 事件坐标以窗口为原点；转换到 sprite 坐标要扣减窗口余量。异常时退回屏幕坐标推导：
+    // forwarded 事件坐标以窗口为原点；转换到 sprite 坐标要扣减本体在窗口内的偏移。异常时退回屏幕坐标推导：
     // ÷scale 后减去窗口屏幕原点即窗口内坐标（hitRect/pos 均为 CSS 系）。
-    const wx = Number.isFinite(e.clientX) ? e.clientX : toLocal(e.screenX) - (this.pos.x + VIEW.x - this.margin.l);
-    const wy = Number.isFinite(e.clientY) ? e.clientY : toLocal(e.screenY) - (this.pos.y + VIEW.y - this.margin.t);
-    const px = wx - this.margin.l;
-    const py = wy - this.margin.t;
+    const wx = Number.isFinite(e.clientX) ? e.clientX : toLocal(e.screenX) - (this.pos.x + VIEW.x - this.winOffset.x);
+    const wy = Number.isFinite(e.clientY) ? e.clientY : toLocal(e.screenY) - (this.pos.y + VIEW.y - this.winOffset.y);
+    const px = wx - this.winOffset.x;
+    const py = wy - this.winOffset.y;
     const inBody = px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
     // 快捷键与拖拽都只在"光标在身体上"时生效，与提示/穿透同源，避免另一套判定
     this.hoverBody = inBody;
     // 光标存视口坐标（窗口原点 + 窗口内坐标）：窗口随宠物移动时贴光标不会漂。必须在 setTip 之前
     // 更新——setTip 变显隐时会立刻渲染一次，晚一步就会用上一次的光标摆位。
-    if (inBody) this.tipCursor = { x: this.pos.x - this.margin.l + wx, y: this.pos.y - this.margin.t + wy };
+    if (inBody) this.tipCursor = { x: this.pos.x - this.winOffset.x + wx, y: this.pos.y - this.winOffset.y + wy };
     this.setInteractive(inBody);
     // 悬浮提示与可交互判定同源（同一个 inBody）：进身体出现，离开收起
     this.setTip(inBody);

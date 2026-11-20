@@ -9,7 +9,7 @@
 import type { Pet } from '../../shared/types.ts';
 import type { ConfigEntry, PackWrite } from './config/index.ts';
 import type { DialogState } from './dialog.ts';
-import type { PetPatch } from './pet-card.ts';
+import type { PetPatch } from './pet-card-parts.ts';
 import type { SettingsRuntime } from './runtime.ts';
 /** 种类条的一项。 */
 export interface PetKind {

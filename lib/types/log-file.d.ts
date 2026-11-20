@@ -61,7 +61,7 @@ export declare const LOG_MAX_PENDING = 1000;
 export declare function redactSensitive(text: string): string;
 /** 截断时保留尾部 `keepBytes` 字节；取尾部会切断多字节字符，调用方只用于拼日志文本，可接受。 */
 export declare function tailForTrim(content: Buffer, keepBytes: number): Buffer;
-/** 一行日志的最终形态：`<ISO 时间> [级别] 正文`（正文里的换行保留，便于堆栈可读）。 */
+/** 一行日志的最终形态：`<本地时间+偏移> [级别] 正文`（正文里的换行保留，便于堆栈可读）。 */
 export declare function formatLogLine(level: LogLevel, message: string, now: Date): string;
 /** 创建一个文件日志出口：日志同时转发给 `base`，落盘按批量与大小上限处理。 */
 export declare function createFileLogger(options: FileLoggerOptions): FileLogger;

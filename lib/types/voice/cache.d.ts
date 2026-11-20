@@ -1,22 +1,33 @@
+import type { VoiceFormat } from './types.ts';
 /** 缓存总量上限（字节）：超过后从最旧的开始删。 */
 export declare const CACHE_MAX_BYTES: number;
 /** 缓存文件条数上限。 */
 export declare const CACHE_MAX_FILES = 200;
-/** 缓存文件的完整路径：`<userRoot>/voice-cache/<key>.mp3`。 */
-export declare function cachePath(userRoot: string, key: string): string;
+/** 各格式的落盘扩展名与应答 MIME；缓存路径、淘汰白名单与路由应答都读这一份。 */
+export declare const FORMAT_INFO: Record<VoiceFormat, {
+    readonly ext: string;
+    readonly mime: string;
+}>;
+/**
+ * 缓存文件的完整路径：`<userRoot>/voice-cache/<key><ext>`。
+ * @param userRoot - 用户数据根。
+ * @param key - {@link cacheKey} 的结果。
+ * @param format - 音频格式；决定扩展名。
+ */
+export declare function cachePath(userRoot: string, key: string, format: VoiceFormat): string;
 /**
  * 计算缓存键。
  *
- * 四个输入都影响音频内容。`source` 是合成来源——内置实现的 id 或第三方 provider 的 id：
- * 不含它的话，切换实现后会命中上一家的旧音频，听起来像「注册了没生效」。
- * `text` 不做归一化——同一句话多一个空格就是另一份音频，宁可多存也不冒「听起来不对」的风险。
- * @param source - 合成来源。
- * @param voice - 音色 id；第三方实现没有音色概念，传空串。
- * @param rate - 语速表达式（如 `+0%`）。
+ * 三个输入都影响音频内容。`voiceId` 是限定 id（含 provider 前缀），所以换实现、换音色、
+ * 换语速、换文本里的任何一项都不会命中旧音频；`text` 不做归一化——同一句话多一个空格
+ * 就是另一份音频，宁可多存也不冒「听起来不对」的风险。
+ *
+ * @param voiceId - 限定音色 id，如 `edge/zh-CN-XiaoyiNeural`。
+ * @param rate - 语速偏移百分比，由入口解析成数字后传入。
  * @param text - 待合成文本。
  * @returns 十六进制 sha1。
  */
-export declare function cacheKey(source: string, voice: string, rate: string, text: string): string;
+export declare function cacheKey(voiceId: string, rate: number, text: string): string;
 /**
  * 确保缓存目录存在。
  * @param userRoot - 用户数据根。

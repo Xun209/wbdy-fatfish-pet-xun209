@@ -5,11 +5,14 @@
  */
 import type { FunctionComponent } from 'react';
 import type { SettingsRuntime } from '../runtime.ts';
-/** 一个可选音色的展示信息；`id` 既是提交值也是稳定 key。 */
+/** 一个可选音色的展示信息；`id`（限定 id）既是提交值也是稳定 key。 */
 export interface VoiceOption {
     readonly id: string;
     readonly name: string;
-    readonly tag: string;
+    /** 展示用副标题，如「女 · 活泼」；缺省时只显示名称。 */
+    readonly tag?: string;
+    /** 所属 provider 的展示名；渲染成下拉里的分组标题。 */
+    readonly providerName?: string;
 }
 /** 音色选择器的对外契约：一个字段一个实例。 */
 export interface VoicePickerProps {

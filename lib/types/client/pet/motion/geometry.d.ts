@@ -55,8 +55,6 @@ export declare function centerToBox(center: Center, viewport: Viewport, half: Ha
  * @returns 可提交给 `customPos` 的归一化中心。
  */
 export declare function boxToRatio(box: BoxPoint, viewport: Viewport, half: HalfSize): Center;
-/** 越界摆放的可见下限（px）：命中区留在视口内至少这么多，右键才点得到。 */
-export declare const MIN_REACHABLE_PX = 24;
 /**
  * 把越界摆放的盒子收到「命中区至少还可见 {@link MIN_REACHABLE_PX}」。
  *
@@ -71,8 +69,13 @@ export declare function clampReachableBox(box: BoxPoint, viewport: Viewport, bod
     size: number;
     bottomPad: number;
 }): BoxPoint;
-/** 舞台内联样式：拖拽中取消脚垫位移，让视频贴着指针走。 */
-export declare function petStageStyle(dragging: boolean, bottomPad: number): CSSProperties;
+/**
+ * 舞台内联样式：脚底垫高恒定生效，拖拽中也不取消。
+ *
+ * 拖拽的抓取偏移按根节点包围盒量（不含这段位移），一旦取消，视频会相对光标
+ * 整体上跳 bottomPad、松手再落回；位移恒定，抓取点才始终落在光标下。
+ */
+export declare function petStageStyle(bottomPad: number): CSSProperties;
 /**
  * 根节点的定位内联样式。
  *

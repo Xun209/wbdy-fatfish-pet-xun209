@@ -15,6 +15,8 @@ export declare const WORK_STATUS_INDEX: Record<WorkStatusState, number>;
 export interface WorkStatusSnapshot {
     state: WorkStatusState | null;
     task: string | null;
+    /** 当前展示条目所属会话；空闲 / 外部槽 / 老版本宿主缺该字段时都不出现，气泡因此不可点。 */
+    sessionId?: string | null;
 }
 /** 快照解析：档位不认识 → 归一成 null（空闲）；形状非法 → null，消费端跳过这一拍。 */
 export declare function toWorkStatus(raw: unknown): WorkStatusSnapshot | null;

@@ -14,6 +14,13 @@ export interface HostSetupContext {
     /** 对外提供 Cordis 服务。 */
     provide(name: string, value: unknown): void;
 }
+/** 独立模式余额查询要用的服务商与密钥（由 standalone 的 standaloneAi 服务提供）。 */
+export interface StandaloneBalanceAuth {
+    /** 设置页选中的余额服务商 id；空串表示未选择。 */
+    provider: string;
+    /** 设置页保存的密钥；空串表示未保存。 */
+    apiKey: string;
+}
 /** 装配产物：apply 后续逻辑与路由层共用的对象。 */
 export interface HostSetup {
     /** 本插件的数据根（配置与用户素材都收敛于此） */
@@ -36,6 +43,10 @@ export interface HostSetup {
     readonly optionalService: (name: string) => unknown;
     /** 独立模式的碎碎念授权策略 */
     readonly standaloneAiPolicy: () => StandaloneWhisperPolicy | undefined;
+    /** 独立模式的余额凭证；DSH 宿主里是 undefined → 余额走 currentSelection 与 credential store。 */
+    readonly standaloneAiBalance: () => StandaloneBalanceAuth | undefined;
+    /** 独立模式单独保存的 DeepSeek 语音密钥；DSH 模式下为 undefined。 */
+    readonly standaloneDeepseekKey: () => string | undefined;
     /** 轮询快照 */
     readonly state: PollStateStore;
     /** 第三方菜单注册表 */

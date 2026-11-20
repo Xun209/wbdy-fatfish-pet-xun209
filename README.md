@@ -15,6 +15,37 @@ WorkBuddy Agent ──hook──▶ scripts/wb-state-hook.mjs ──▶ 狀態�
 
 ---
 
+## 模型後端：自動接入 WorkBuddy
+
+寵物**不需要另外給金鑰** —— 它會自動偵測本機的 WorkBuddy 桌面端，
+直接用你已經登入的那個帳號的額度。
+
+```
+WorkBuddy 桌面端（已登入）
+   │  以 ELECTRON_RUN_AS_NODE 跑 WorkBuddy.exe，取它自己的 AtRest 金鑰
+   │  （金鑰不落盤、只存在於客戶端行程裡 → 請客戶端自己交出來）
+   ▼
+解密登入檔的 accessToken（唯讀，絕不寫回）
+   ▼
+copilot.tencent.com/v2/chat/completions（國際版 www.workbuddy.ai）
+```
+
+- **憑據來源的優先序**（`pet-host/lib/ai.mjs`）：
+  1. 環境變數 `WORKBUDDY_PET_AI_BASE_URL` / `_API_KEY` / `_MODEL` / `_PROVIDER`
+  2. 設定檔 `<狀態目錄>/pet-host/ai.json`
+  3. **WorkBuddy 桌面端（自動接入）**
+  4. DSH 憑據庫 `~/.dsh/.credentials.yaml`（MiniMax 金鑰）
+  > **明確指定優先於自動發現**：使用者指定過的（1、2）不會被「自動」蓋掉。
+  > WorkBuddy 排在 DSH 憑據庫前面，因為它才是「本機正在用的那一把鑰匙」。
+- **模型目錄**取上游**帳號目錄**（`/v2/enterprises/personal/models`）——
+  那才是這個帳號現在真的能調的；取不到才退回本機離線的 `cli/product.json`。
+- **預設模型** `hy4flash`（x0.03 積分，夠碎碎念用）；上游改版換掉這個 id 時
+  會自動改挑最便宜的一支，不會讓寵物啞掉。
+  要指定別支：`WORKBUDDY_PET_AI_MODEL=glm-5.3`。
+- **找不到 WorkBuddy 或沒登入** → 照舊往下一級找（DSH 憑據庫），並在啟動摘要裡如實報出原因。
+- ★ 全程**唯讀**：登入檔從不被寫回（寫回會破壞客戶端的加密憑據儲存）。
+- ★ 這是**非官方路徑**：上游隨時可能改協議或收緊風控。失效時寵物會自動退回下一級後端。
+
 ## 目錄結構
 
 ```
@@ -248,13 +279,49 @@ node tools/package-plugin.mjs --include-lib-extras
 ## 上游同步紀錄
 
 本分支改編自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（MIT）。
-上游 **v0.4.7**（2026-11-08/09）的改動與本分支的對照：
+
+### 目前的基準：**v0.4.9**（2026-11-14）
+
+同步是**可重複執行**的，不要手動複製檔案：
+
+```bash
+node tools/sync-from-dsh-pet.mjs --from <dsh-pet 包根>   # 取檔 → 套改名 → 列報告
+node tools/sync-from-dsh-pet.mjs --from <dsh-pet 包根> --dry-run
+node tools/sync-from-dsh-pet.mjs --from <dsh-pet 包根> --clean-bak   # 順手清開發殘留
+```
+
+它同步 `runtime/electron-helper/**`、`lib/**`、`assets/config.jsonc`，
+並只**補上**上游新增的 `assets/webm`（既有的 109 支一支都不動，避免重新編碼造成畫質變動），
+最後自動跑 `tools/apply-branding.mjs` 套回品牌名。
+
+> 同步後**一定要**跑一次驗證（打包誤傷相依只有解壓後才會炸）：
+> ```bash
+> node "<工作區>/_verify_packages.mjs" --only wbdy-fatfish-pet
+> ```
+
+#### v0.4.7 → v0.4.9 的差異與本分支的處置
 
 | 上游改動 | 本分支 |
 |---|---|
-| 語音四類開關改為平級、總開關只管「手動播報」 | **未套用**：本分支的語音閘門在 `lib/index.js`（上游宿主半側的建置物，與上游差 20KB，改不動）。已保留原語意，並新增 `voiceNotifyEnabled` 鍵（預設關、暫未接線） |
+| 語音四類開關改為平級、總開關只管「手動播報」 | ✅ 已套用（0.4.9 的 `lib/index.js` 原樣帶入） |
+| 新增 `voice-notify`（通知播報）、對話面板多語言、頭像路由、`chat-memory-provider` | ✅ 已套用（頭像路由對「內置條目」會回 `bad-request`，那是上游的業務規則） |
+| **語音改為多實作註冊表**：音色 id 唯一形態變成 `provider/音色`（如 `edge/zh-CN-XiaoyiNeural`） | ✅ 已套用。WorkBuddy 版走 `edge` 這條路（`@andresaya/edge-tts` 被轉接到本機 SAPI，音色 id 仍是裸名）→ 使用者層的舊音色 id 由 `pet-host/lib/tts.mjs` 的 `migrateVoiceName()` 自動補前綴 |
+| 新增天氣（`/environment`、城市可設定） | ✅ 已套用 |
+| 新增 `notifyWhenFocused`（前台聚焦時也提醒） | ✅ 已套用 |
+| 識別改為多實作（`/voice/hear-providers`：dsh / deepseek） | ✅ 已套用（WorkBuddy 沒有宿主語音插件，識別會明確報不可用，不會假裝成功） |
+| `assets` 新增 5 支動畫（吃飯團 / 開心小跑 / 期待開飯 / 吃飯·碗飯 / 側身急躁跑） | ✅ 已補（109 → 114 支） |
+| **宿主半側改成「全部軟取」**：`inject` 清空，服務一律 `ctx.get(name, false)` | ✅ 已套用。**WorkBuddy 版的偽 ctx 必須同步改**：`pet-host/lib/dsh-pet.mjs` 的 `get()` 要把內建服務（`webServer` / `llm` / `credentials` / `agentDefaultModel` / `connection` / `commands`）一起放進查找鏈，否則路由註冊不上、模型功能全失效 |
+| 托盤「藏一下」不再寫盤（本次運行內有效，重啟後桌寵回來） | ✅ 已套用（上游 issue #383；本機 fork 的修正，見 SKILL 技能「〇、dsh-pet 插件基線」） |
+| 吃白飯（baifan）覆蓋層改掛 `shell.overlay` 插槽 | 不適用：本分支**沒有**吃白飯功能 |
+| 獨立模式對話頁白屏修正 | 不適用：本分支的獨立模式在 `pet-host/main.mjs`，與上游不同 |
+
+### 舊紀錄（v0.4.7 時代）
+
+| 上游改動 | 本分支 |
+|---|---|
+| 語音四類開關改為平級、總開關只管「手動播報」 | 當時**未套用**（宿主半側是建置物、改不動）；0.4.9 同步後已套用 |
 | 吃白飯（baifan）覆蓋層改掛 `shell.overlay` 插槽（修 Windows 標題欄拖曳死區 #323/#324） | 不適用：本分支**沒有**吃白飯功能 |
-| 新增 `voice-notify`（通知播報）、對話面板多語言、頭像路由、`chat-memory-provider` | 不適用：本分支是精簡分支，沒有這些功能 |
+| 新增 `voice-notify`（通知播報）、對話面板多語言、頭像路由、`chat-memory-provider` | 當時不適用；0.4.9 同步後已套用 |
 | 獨立模式對話頁白屏修正 | 不適用：本分支的獨立模式在 `pet-host/main.mjs`，與上游不同 |
 | `assets` 新增字型與音效 | 已有 ✓ |
 
@@ -262,3 +329,6 @@ node tools/package-plugin.mjs --include-lib-extras
 - 桌面視窗拖曳條 + 右上角自畫 −□✕（`pet-host/overlay/`，因 Windows 上 Electron 無框視窗不畫原生控件）
 - WorkBuddy 介面內的 iframe 版寵物（`usage-overlay/`）
 - MiniMax 餘量膠囊、WorkBuddy 專用 hooks / MCP / Skill
+- 語音走 Windows SAPI（離線、不連外部服務）——靠轉接 `@andresaya/edge-tts` 這個相依實作
+- `tools/sync-from-dsh-pet.mjs`（把上游同步做成可重複執行的腳本）
+

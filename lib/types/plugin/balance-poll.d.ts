@@ -5,7 +5,7 @@ import type { HostContext } from './context.ts';
 export type BalancePollInput = {
     /** 宿主上下文（apply 收到的那一个）。 */
     ctx: HostContext;
-} & Pick<HostSetup, 'configPaths'> & Pick<ChatMemory, 'getActivePetId'> & Pick<HostSetup, 'log'> & Pick<HostSetup, 'state'>;
+} & Pick<HostSetup, 'configPaths'> & Pick<ChatMemory, 'getActivePetId'> & Pick<HostSetup, 'log'> & Pick<HostSetup, 'standaloneAiBalance'> & Pick<HostSetup, 'state'>;
 /**
  * 创建余额与周期。
  */
@@ -13,7 +13,7 @@ export declare function createBalancePoll(deps: BalancePollInput): {
     effectivePetList: () => Record<string, unknown>[];
     balancePeriodSec: (cfg: Record<string, Record<string, unknown>>) => number;
     whisperPeriodSec: (conf: Record<string, unknown>) => number;
-    refreshBalance: (manual?: boolean) => Promise<void>;
+    refreshBalance: (manual?: boolean, petId?: string) => Promise<void>;
     resolveActivePetId: () => string;
     petDisplayName: (pet: Record<string, unknown>) => string;
 };

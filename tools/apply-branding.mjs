@@ -73,13 +73,21 @@ const HOST_APP_REPLACEMENTS = [
   ['找不到可用的 DSH pet 套件', '找不到可用的 workbuddy-pet 套件'],
 ]
 
-/** 遞迴列出目錄下的所有 .js 檔。 */
-function jsFiles(dir) {
+/**
+ * 遞迴列出目錄下要改名的檔。
+ *
+ * ★ 要包含 `index.html`：視窗標題來自它的 `<title>`，那是最容易漏掉的一處——
+ *   只掃 .js 的話，桌面小窗在工作管理員裡仍然寫著「dsh-pet 桌寵（桌面模式）」，
+ *   使用者會以為是 DSH 自己那隻寵物。
+ *   CSS 自訂變數名（--dsh-pet-*）與 bridge scheme 不在替換表裡 —— 它們是
+ *   Helper 與宿主半側之間的內部契約，改了會壞。
+ */
+function brandFiles(dir) {
   const out = []
   for (const name of readdirSync(dir)) {
     const full = join(dir, name)
-    if (statSync(full).isDirectory()) out.push(...jsFiles(full))
-    else if (name.endsWith('.js')) out.push(full)
+    if (statSync(full).isDirectory()) out.push(...brandFiles(full))
+    else if (name.endsWith('.js') || name.endsWith('.html')) out.push(full)
   }
   return out
 }
@@ -104,7 +112,7 @@ function main() {
     return false
   }
 
-  for (const file of jsFiles(HELPER_DIR)) {
+  for (const file of brandFiles(HELPER_DIR)) {
     apply(file, REPLACEMENTS)
   }
   if (apply(HOST_LIB, HOST_REPLACEMENTS)) {

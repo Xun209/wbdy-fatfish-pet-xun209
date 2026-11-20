@@ -27,7 +27,7 @@ Object.assign(PetSprite.prototype, {
       // 按规划落点插值而不是 dir × 距离：minDist/maxDist 为负时符号必须保留，
       // 否则规划往左、驱动往右，走完再跳回原本的方向。
       else ratioX = startRatio + (targetRatio - startRatio) * ((t - leadSec) / travelWindow);
-      // 移动的是窗口（宠物包围盒跟随），sprite 在本窗口内不动
+      // 移动的是窗口（宠物包围盒跟随）；本体在窗口内的偏移由 sendBounds 按钳制情况算
       this.sendBounds(ratioX * W - this.halfW, startYRatio * H - this.halfH);
       if (t < duration - tailSec) {
         this.moveRef = requestAnimationFrame(step);
@@ -83,7 +83,7 @@ Object.assign(PetSprite.prototype, {
       vel.vy = S.springStep(vel.vy, y, target.y, dt, this.physics.throwPower);
       x += vel.vx * dt;
       y += vel.vy * dt;
-      this.sendBounds(x, y); // 移动的是窗口（this.pos 实时更新）；sprite 在本窗口内不动
+      this.sendBounds(x, y); // 移动的是窗口（this.pos 实时更新）；本体偏移由 sendBounds 统一算
       this.dragFollow = requestAnimationFrame(step);
     };
     this.dragFollow = requestAnimationFrame(step);
@@ -128,19 +128,6 @@ Object.assign(PetSprite.prototype, {
       }
       state = { x: res.x, y: res.y, vx: res.vx, vy: res.vy };
       this.throwState = state;
-      // 上报飞行状态（节流 ~30ms）：主进程 broker 汇聚后广播，其它窗口据此做跨窗碰撞检测；
-      // broker 协议单位是物理像素，这里 ×scale。
-      if (window.petBridge && window.petBridge.reportFlight && now - this.lastFlightReport > 30) {
-        window.petBridge.reportFlight({
-          x: toScreen(state.x),
-          y: toScreen(state.y),
-          vx: toScreen(state.vx),
-          vy: toScreen(state.vy),
-          size: toScreen(this.size),
-          bottomPad: toScreen(this.bottomPad),
-        });
-        this.lastFlightReport = now;
-      }
       // 宠物间碰撞（仅 petCollision 开启）：飞行中的自己撞到其它宠物 → 动量弹开
       if (this.physics && this.physics.petCollision) {
         const myBody = S.bodyPixelBox({ x: state.x, y: state.y, size: this.size, bottomPad: this.bottomPad });

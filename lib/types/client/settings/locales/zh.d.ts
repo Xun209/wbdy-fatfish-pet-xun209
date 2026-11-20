@@ -5,6 +5,12 @@ export declare const zh: {
     nav: string;
     intro: string;
     petCardTitle: string;
+    avatarLabel: string;
+    avatarHint: string;
+    avatarUpload: string;
+    avatarChange: string;
+    avatarUploading: string;
+    avatarUploaded: string;
     petCardHint: string;
     globalTitle: string;
     globalHint: string;
@@ -105,6 +111,8 @@ export declare const zh: {
     savePartial: string;
     notifyToggle: string;
     notifyToggleHint: string;
+    notifyWhenFocusedToggle: string;
+    notifyWhenFocusedToggleHint: string;
     clickSoundToggle: string;
     clickSoundToggleHint: string;
     whisperImageToggle: string;
@@ -125,9 +133,22 @@ export declare const zh: {
     voiceWhisperEnabledHint: string;
     voiceTodoEnabled: string;
     voiceTodoEnabledHint: string;
+    voiceNotifyEnabled: string;
+    voiceNotifyEnabledHint: string;
     voiceNameLabel: string;
+    voiceNameHint: string;
+    speechProviderLabel: string;
+    speechProviderHint: string;
     voiceVolumeLabel: string;
     voiceVolumeHint: string;
+    environmentTitle: string;
+    environmentHint: string;
+    environmentCityLabel: string;
+    environmentCityHint: string;
+    environmentCityPlaceholder: string;
+    environmentDetect: string;
+    environmentDetected: string;
+    environmentDetectFailed: string;
     physicsTitle: string;
     physicsHint: string;
     mobileTitle: string;
@@ -207,6 +228,12 @@ export declare const zh: {
     uninstallStep1: string;
     uninstallStep2: string;
     uninstallStep3: string;
+    motionTitle: string;
+    motionHint: string;
+    'motion.idle': string;
+    'motion.turn': string;
+    'motion.move': string;
+    'motion.action': string;
     uninstallCmd: string;
 };
 /** 文案键；zh 的键集即全集。 */

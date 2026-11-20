@@ -139,7 +139,21 @@ export function createGuard({ portRef, token }) {
         const sameOrigin =
           req.headers['sec-fetch-site'] === 'same-origin' ||
           (origin !== undefined && origin === `http://${host}`);
-        if (!llm && !isCrossSite && sameOrigin) return true;
+        // ★ 2026-11-20 修正：同源請求連「會呼叫模型」的端點也放行
+        //   症狀：WorkBuddy 介面裡的擴充面板（iframe → http://127.0.0.1:<port>/fatfish-overlay.html）
+        //   的對話框完全沒反應（POST /chat 與 /whisper 都是 403「此端點會呼叫模型，需要令牌」）。
+        //
+        //   為什麼原來不放行：上游怕「惡意網頁誘導燒額度」。
+        //   但那個顧慮針對的是**跨站**請求，而跨站本來就被擋死了：
+        //     ① Host 必須是本機回環（127.0.0.1:port / localhost:port），服務不監聽公網；
+        //     ② sec-fetch-site: cross-site → isCrossSite → 一律要令牌；
+        //     ③ Origin 必須精確等於 http://<host>，而 Origin 是瀏覽器強制的、JS 不可偽造
+        //        （惡意網頁與 DNS rebinding 的 Origin 都是自己的網域，不會匹配）。
+        //   所以「同源」就等同於「確實是本機這個 origin 發起的請求」——本服務自己送出的頁面
+        //   （擴充面板的 overlay 頁、獨立模式頁）正是這一類，之前被誤傷。
+        //
+        //   跨站仍然要令牌（外人拿不到令牌），語意不變。
+        if (!isCrossSite && sameOrigin) return true;
         return reject(res, 403, llm ? '此端點會呼叫模型，需要令牌' : '此寫入端點需要令牌');
       }
       return true;

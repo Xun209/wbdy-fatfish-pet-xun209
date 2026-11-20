@@ -14,9 +14,12 @@ export declare const MORE_MENU_LABEL = "\u66F4\u591A";
  *  宁可在两端都显示，也不要让一个正在用的第三方菜单凭空消失。
  *  快照来自网络，字段一律按「可能不存在」处理：坏条目静默丢弃，不能让一条数据搞崩菜单。 */
 export declare function readMenuItems(data: unknown, surface: 'web' | 'desktop'): MenuMoreItem[];
-/** 「更多」一级菜单：把第三方菜单项拼成菜单树的一枝；没有第三方项时返回 null，菜单里不会出现空的「更多」。
- *  层级只按项数决定：某 owner 只有 1 项就直接平铺（少一次点击），2 项及以上才加 owner 这一层。
- *  同名不同 owner 的项允许共存，不做去重、编号或来源标注——文案由注册方负责。 */
+/** 「更多」：第三方菜单项的固定容器；没有第三方项时返回 null，菜单里不出现空的「更多」。
+ *
+ *  层级只按 label 是否重名决定：label 在全部第三方项里唯一 → 直接平铺（`更多 / 弹弓`）；
+ *  label 重名 → 每个 owner 各占一个子菜单（`更多 / owner / label`），靠它区分同名项。
+ *  重名只可能跨 owner（同一 owner 内 label 按 Map 去重，见 host/menu 的注册表），子项仍是原
+ *  label——点击上报的 (owner, label) 与平铺时完全一致，两端点击处理不用分叉。 */
 export declare function buildMoreBranch(items: readonly MenuMoreItem[]): MenuBranch | null;
 /** 把动画名包成叶子。 */
 export declare const leaf: (anim: string) => MenuLeaf;

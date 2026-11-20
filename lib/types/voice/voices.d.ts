@@ -1,8 +1,8 @@
 /**
- * 语音音色的唯一真相：白名单、展示元数据与默认值。
+ * 内置实现的音色清单：provider 内的 id、展示元数据与默认值。
  *
- * 请求体里的 `voice` 只接受这里列出的 id——不接受任意音色串，否则等于把上游的能力面
- * 全部开放，出问题也说不清是谁传的。列表接口与校验都读同一个常量，不写第二份。
+ * 这里只是 edge 这一个实现声明自己有哪些嗓子；第三方各自的清单随注册一起提交，
+ * 对外的限定 id 由注册表统一拼，本文件不参与。
  * @module dsh-pet/src/host/voice/voices
  */
 /** 一个可选音色；`id` 是 edge 服务端的 short name，其余字段只用于展示。 */
@@ -12,13 +12,7 @@ export interface VoiceInfo {
     readonly tag: string;
     readonly default: boolean;
 }
-/** 允许请求的四个中文音色；标记 `default` 的那个是缺省值。 */
+/** 内置实现的四个中文音色；标记 `default` 的那个是缺省值。 */
 export declare const VOICES: readonly VoiceInfo[];
-/** 默认音色 id；请求与配置都没指定时用它，必须与 {@link VOICES} 里 `default` 标记的那个一致。 */
+/** 默认音色 id；内置实现用它做 ensure 的探针，必须与 {@link VOICES} 里 `default` 标记的那个一致。 */
 export declare const DEFAULT_VOICE = "zh-CN-XiaoyiNeural";
-/**
- * 判断音色是否在白名单内。
- * @param id - 待校验的音色 id。
- * @returns 属于白名单时为 true。
- */
-export declare function isKnownVoice(id: string): boolean;

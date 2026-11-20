@@ -1,5 +1,5 @@
 /**
- * 一张宠物卡的响应式状态与写入口：动画、朝向、拖拽态、提示与自定义位置。
+ * 一张宠物卡的响应式状态与写入口：动画、朝向、提示与自定义位置。
  * 不负责派生几何（geometry 负责）与驱动实例（由装配根持有），也不做任何判定。
  * 依赖注入的 react；状态只在卡内使用，跨卡不共享。
  * 不变量：anim / once / seq 三者共同决定是否换源，只改其中一个会走进防重分支。
@@ -21,8 +21,6 @@ export interface CardState {
     cuePlayback: string | null;
     /** 朝向，决定镜像与走位方向。 */
     facing: PetFacing;
-    /** 拖拽中：舞台取消脚垫位移，指针样式与捕获同时切换。 */
-    dragging: boolean;
     /** 悬浮提示显隐。 */
     tipOn: boolean;
     /** 用户拖拽后的归一化中心；null 表示仍按角落定位。 */
@@ -49,8 +47,6 @@ export interface CardStateActions {
     setCuePlayback(id: string | null): void;
     /** 设置朝向。 */
     setFacing(facing: PetFacing): void;
-    /** 设置拖拽态。 */
-    setDragging(on: boolean): void;
     /** 设置提示显隐。 */
     setTipOn(on: boolean): void;
     /** 设置归一化中心；null 表示回到角落定位，也接受函数式更新以强制重排。 */

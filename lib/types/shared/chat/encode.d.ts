@@ -2,6 +2,8 @@
  * 对话图片的压缩与编码：把一张文件或一块画布压进宿主可接受的预算，产出可发送的 base64。
  * 纯计算（尺寸换算、字节反推）与 DOM（解码、canvas）分开，前者可单测。
  * 预算依据：宿主按 1 MiB 请求体拒绝，base64 膨胀 4/3，所以解码后上限取 640 KiB。
+ * 解码与 base64 编码两个小件（{@link loadImage}、{@link bytesToBase64}）也供设置页的头像上传感复用——
+ * 头像的预算与质量阶梯不同，但「怎么把文件读成图、怎么读成规范 base64」只有这一份实现。
  * @module dsh-pet/src/shared/chat/encode
  */
 import { type PetImageMediaType } from './image-pick.ts';
@@ -30,6 +32,25 @@ export interface EncodedImage {
     /** 小尺寸预览（几十 KB 以内），避免把整张图的 data URL 挂在 DOM 上。 */
     readonly previewUrl: string;
 }
+/**
+ * 把文件解码成 `<img>`。
+ *
+ * 用 `FileReader` 的 data URL 而不是 `URL.createObjectURL`：桌面 helper 的 CSP 是
+ * `img-src 'self' http: https: data:`，不含 `blob:`，objectURL 在那边会被拦成 onerror
+ * （表现为"这个文件解不出图片"，而浏览器端正常）。
+ *
+ * @param file - 用户选中的图片文件。
+ * @returns 解码完成的图片元素。
+ * @throws 文件读不出来或解不出图片时。
+ */
+export declare function loadImage(file: File): Promise<HTMLImageElement>;
+/**
+ * 字节 → 规范 base64（分块，避免 String.fromCharCode 参数过多爆栈）。
+ *
+ * @param bytes - 已读进内存的原始字节。
+ * @returns 不带 data: 前缀的规范 base64。
+ */
+export declare function bytesToBase64(bytes: Uint8Array): string;
 /**
  * 把一块画布压进预算：按质量阶梯转 JPEG，第一档进预算就停。
  *

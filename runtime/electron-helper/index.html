@@ -22,10 +22,12 @@
         font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
         user-select: none;
       }
+      /* 宠物画布必须与窗口内容区重合：主进程按 winOffset 算命中区，假定 #root 原点就是窗口内容原点。
+         body 里的行内节点（如 alpha 滤镜的 0×0 SVG）会生成行盒把它整体顶下一行（约 20px），
+         画面与命中区会同时错位，所以这里绝对定位、脱离 body 流。 */
       #root {
-        position: relative;
-        width: 100%;
-        height: 100%;
+        position: absolute;
+        inset: 0;
       }
       /* 宠物 sprite：绝对定位在画布内，由 renderer 按角落/边距或拖拽位置计算 left/top */
       .pet-sprite {
@@ -49,6 +51,12 @@
         pointer-events: none;
         opacity: 0;
         transition: opacity 0.18s ease;
+      }
+      /* 1/255 修正：WebM 的「透明」背景实测 alpha 恒为 1/255（109 个素材逐一验证），Chromium 按
+         0.4% 不透明度合成，浅色底上就是一层淡灰矩形；扣掉一档即精确归零。开关是共享常量
+         PET_ALPHA_FIX_ENABLED——静态样式表读不到它，由 renderer.js 挂 class。 */
+      html.pet-alpha-fix video.pet-video {
+        filter: url(#dsh-pet-alpha-fix);
       }
       video.pet-video.is-front {
         opacity: 1;
@@ -128,6 +136,39 @@
       .pet-bubble.is-on {
         opacity: 1;
       }
+      /* 戳破：鼓一下 → 缩成小泡泡 → 模糊散掉，与浏览器 overlay 同一套 keyframes。
+         transform 必须带 translateX(-50%)：气泡靠它居中，动画一覆盖就会横向跳半个身位 */
+      .pet-bubble.is-popping {
+        pointer-events: none;
+        animation: popOut 0.42s cubic-bezier(0.2, 0.72, 0.3, 1) forwards;
+      }
+      @keyframes popOut {
+        0% {
+          transform: translateX(-50%) scale(1);
+          opacity: 1;
+          filter: blur(0);
+        }
+        16% {
+          transform: translateX(-50%) scale(1.07);
+          opacity: 1;
+          filter: blur(0);
+        }
+        34% {
+          transform: translateX(-50%) scale(1.16);
+          opacity: 0.92;
+          filter: blur(0.3px);
+        }
+        62% {
+          transform: translateX(-50%) scale(0.9);
+          opacity: 0.42;
+          filter: blur(2px);
+        }
+        100% {
+          transform: translateX(-50%) scale(0.55);
+          opacity: 0;
+          filter: blur(7px);
+        }
+      }
       /* 碎碎念变体：与浏览器 overlay 一致 —— 字号缩到余额气泡的 0.75、宽度下限更窄（0.10 → 2.1978），
          上限与余额气泡相同；宽度取宽/折行规则继承 .pet-bubble，高度随行数自然增长 */
       .pet-bubble.is-whisper {
@@ -152,6 +193,56 @@
       .pet-bub-err {
         color: #d94f3d;
         font-size: calc(var(--f) * 0.7692);
+      }
+      /* ---- 环境气泡（天气）：与网页端气泡的同名规则数值逐条对应 ---- */
+      .pet-bub-title {
+        font-size: calc(var(--f) * 0.7692);
+        color: rgba(43, 43, 43, 0.6);
+        margin-bottom: calc(var(--f) * 0.24);
+      }
+      .pet-bub-val {
+        font-size: calc(var(--f) * 0.7692);
+        font-weight: 650;
+        font-variant-numeric: tabular-nums;
+        color: #1f1f1f;
+      }
+      .pet-bub-row .pet-bub-val {
+        white-space: nowrap;
+      }
+      .pet-env-main {
+        display: flex;
+        align-items: center;
+        gap: calc(var(--f) * 0.4);
+      }
+      .pet-env-icon {
+        color: #5f7f9e;
+        display: block;
+      }
+      .pet-env-icon svg {
+        width: calc(var(--f) * 1.55);
+        height: calc(var(--f) * 1.55);
+        display: block;
+      }
+      .pet-env-temp {
+        font-size: calc(var(--f) * 1.75);
+        line-height: 1.1;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+        color: #1f1f1f;
+      }
+      .pet-env-summary {
+        font-size: calc(var(--f) * 0.95);
+        color: rgba(43, 43, 43, 0.68);
+        align-self: flex-end;
+        padding-bottom: calc(var(--f) * 0.22);
+      }
+      .pet-env-foot {
+        margin-top: calc(var(--f) * 0.3);
+        padding-top: calc(var(--f) * 0.18);
+        border-top: 1px solid rgba(43, 43, 43, 0.1);
+        font-size: calc(var(--f) * 0.6);
+        color: rgba(43, 43, 43, 0.45);
       }
       .pet-bub-tier {
         font-weight: 700;
@@ -324,6 +415,16 @@
     </style>
   </head>
   <body>
+    <!-- alpha 修正滤镜：见 video.pet-video 的 filter 注释 -->
+    <svg width="0" height="0" aria-hidden="true">
+      <defs>
+        <filter id="dsh-pet-alpha-fix">
+          <feComponentTransfer>
+            <feFuncA type="linear" slope="1" intercept="-0.0039215686" />
+          </feComponentTransfer>
+        </filter>
+      </defs>
+    </svg>
     <div id="root"></div>
     <div id="pet-error" class="pet-error"></div>
     <!-- 共享纯逻辑（src/shared 的 iife 构建产物，window.PetShared）——经经典 script，避开 file:// ESM 的 CORS 限制。
@@ -332,6 +433,7 @@
     <script src="./shared-core.js"></script>
     <script src="./constants.js"></script>
     <script src="./sprite.js"></script>
+    <script src="./sprite/window-fit.js"></script>
     <script src="./sprite/init.js"></script>
     <script src="./sprite/playback.js"></script>
     <script src="./sprite/motion.js"></script>

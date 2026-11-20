@@ -4,6 +4,8 @@ import type { SettingsRuntime } from '../runtime.ts';
 export interface SelectOption {
     id: string;
     label: string;
+    /** 分组标题；相邻且同组时合并，渲染时在组前插一行标题。不参与键盘索引。 */
+    group?: string;
 }
 /** 下拉的对外契约：一个字段一个实例。 */
 export interface SelectProps {

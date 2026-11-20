@@ -1,0 +1,56 @@
+/**
+ * 对话面板中文文案；键集是全集的真源。
+ */
+export declare const zh: {
+    tabTitle: string;
+    tabGuide: string;
+    loading: string;
+    emptyNoPet: string;
+    emptyNoChat: string;
+    older: string;
+    olderEnd: string;
+    olderEndCapped: string;
+    memoryLine: string;
+    orphansSummary: string;
+    orphansClear: string;
+    toolsPersona: string;
+    toolsSelect: string;
+    toolsCancelSelect: string;
+    toolsDeleteSelected: string;
+    toolsDeleteSelectedN: string;
+    toolsMemoryLine: string;
+    toolsMemoryLineHint: string;
+    toolsRefresh: string;
+    toolsClearAll: string;
+    confirmDeleteSelected: string;
+    confirmClearAll: string;
+    confirmClearOrphans: string;
+    confirmCountRounds: string;
+    confirmCountOrphans: string;
+    confirmIrreversible: string;
+    confirmTitle: string;
+    confirmDelete: string;
+    confirmCancel: string;
+    close: string;
+    composerPlaceholder: string;
+    composerAttach: string;
+    composerAttachTip: string;
+    composerRemove: string;
+    composerSend: string;
+    composerSending: string;
+    composerImageAlt: string;
+    speakGenerate: string;
+    speakPlaying: string;
+    speakFailed: string;
+    speakPlay: string;
+    speakAction: string;
+    imageOpen: string;
+    imageAlt: string;
+    lightboxDialog: string;
+    selectRound: string;
+    selectRoundTitle: string;
+    stampYesterday: string;
+    stampMonthDay: string;
+    stampFullDate: string;
+};
+export type Key = keyof typeof zh;

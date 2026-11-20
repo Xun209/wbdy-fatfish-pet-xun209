@@ -29,8 +29,6 @@ export interface CardDragInput {
     motion: CardMotion;
     /** 宠物根节点。 */
     root: () => HTMLDivElement | null;
-    /** 舞台节点：提示与命中的定位基准。 */
-    stage: () => HTMLDivElement | null;
     /** 等新首帧就位后再压 Q 弹。 */
     pendingSquash: ReactNS.MutableRefObject<boolean>;
     /** 归一化中心写入口。 */
@@ -41,8 +39,6 @@ export interface CardDragInput {
     setAnim: (anim: string) => void;
     /** 递增换源序号，强制重播。 */
     bumpSeq: () => void;
-    /** 拖拽态。 */
-    setDragging: (on: boolean) => void;
     /** 悬浮提示显隐。 */
     setTipOn: (on: boolean) => void;
 }

@@ -7,7 +7,7 @@
  * @module dsh-pet/runtime/electron-helper/main/windows
  */
 const path = require('node:path');
-const { pointerZone, decideWindowIgnore } = require('../pointer-target.js');
+const { pointerZone, decideWindowIgnore, leavesBody } = require('../pointer-target.js');
 const { TOPMOST_WATCHDOG_ENABLED, TOPMOST_WATCHDOG_TICK_MS } = require('../topmost-watchdog.js');
 const { TASKBAR_WATCHDOG_TICK_MS, shouldRunTaskbarWatchdog } = require('../taskbar-watchdog.js');
 
@@ -44,6 +44,12 @@ function createWindows({
 }) {
   /** 窗口表：petId -> BrowserWindow */
   const windows = new Map();
+  /** 宠物描述符表：petId -> { id, size, index }。建窗时记下，关窗后仍留着——
+   *  会话级「藏一下 / 叫回来」靠它把窗口原样重建（index 必须与渲染端取宠物的下标一致）。 */
+  const petDescriptors = new Map();
+  /** 会话内被藏起来的宠物（本次运行有效，不写盘）：托盘的「藏一下」只动这里，
+   *  配置原样保留，所以下次启动 DSH 桌宠照旧回来（上游 issue #383 的死角由此避开）。 */
+  const sessionHidden = new Set();
   /** win.id -> 上一次请求的内容区矩形（"x,y,w,h"）：pet:set-bounds 的去重基准 */
   const lastRequestedBounds = new Map();
   /** win.id -> 渲染端上报的窗口余量 `{ l, t }`：上边距按气泡加高后余量不再四边相等，命中区不能按宽反推 */
@@ -56,13 +62,22 @@ function createWindows({
   const inputRegions = new Map();
   /** 每窗口「光标停在余量区且非 busy」的连续时长（ms）：到点由兜底通道强制恢复穿透 */
   const offBodyMs = new Map();
+  /** 每窗口上一拍的光标分区：识别「刚离开身体」，据此向渲染端补发收起悬浮提示的通知 */
+  const lastPointerZone = new Map();
   /** 宠物间碰撞 broker 状态：petId -> { x, y, vx, vy, size, bottomPad } */
   const petStates = new Map();
   /** 冒烟期间暂停兜底泵：它按真实光标翻转，会干扰冒烟对渲染端通道的断言 */
   let pointerFallbackPaused = false;
 
+  /** 碰撞站场最多每 16ms 广播一次，位置仍由 IPC 逐帧立即提交。 */
+  let petStateTimer = null;
+
   /** 把当前全量宠物状态广播给所有窗口（碰撞检测的共享站场）。 */
   function broadcastPetStates() {
+    if (petStateTimer !== null) {
+      clearTimeout(petStateTimer);
+      petStateTimer = null;
+    }
     const states = {};
     for (const [pid, s] of petStates) {
       states[pid] = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, size: s.size, bottomPad: s.bottomPad };
@@ -75,8 +90,13 @@ function createWindows({
   /** 记录/更新一只宠物的状态并广播。 */
   function updatePetState(petId, partial) {
     const prev = petStates.get(petId) || { x: 0, y: 0, vx: 0, vy: 0, size: 0, bottomPad: 0 };
-    petStates.set(petId, Object.assign({}, prev, partial));
-    broadcastPetStates();
+    const next = Object.assign({}, prev, partial);
+    if (petStates.has(petId) && Object.keys(next).every((key) => Object.is(next[key], prev[key]))) return;
+    petStates.set(petId, next);
+    // 单窗没有碰撞对象；多窗合并同一时间段内的更新，定时回调读取最新状态，保留最后一帧。
+    if (windows.size < 2 || petStateTimer !== null) return;
+    petStateTimer = setTimeout(broadcastPetStates, 16);
+    petStateTimer.unref?.();
   }
 
   /** 翻转整窗穿透的唯一出口：状态与镜像永远一起更新（穿透期间保留 forward）。 */
@@ -157,6 +177,11 @@ function createWindows({
       const point = dpi.currentPointer();
       const margin = winMargins.get(win.id);
       const zone = pointerZone(bounds, point, margin);
+      // 提示只在渲染端的 mousemove 里收起；宠物自己走开或窗口被别的窗口接走时没有 mousemove，
+      // 由这一拍补发通知。busy（拖拽/菜单/弹窗）期间提示本就不该显示，不发，免得松手瞬间误收。
+      const prevZone = lastPointerZone.get(win.id);
+      lastPointerZone.set(win.id, zone);
+      if (!busy && leavesBody(prevZone, zone)) win.webContents.send('pet:pointer-left');
       const nextMs = !busy && zone === 'margin' ? (offBodyMs.get(win.id) ?? 0) + POINTER_POLL_MS : 0;
       offBodyMs.set(win.id, nextMs);
       const next = decideWindowIgnore(bounds, point, ignoring, busy, nextMs, inputRegions.get(win.id), margin);
@@ -246,13 +271,17 @@ function createWindows({
     win.on('closed', () => {
       stopPointerFallback();
       stopTopmostWatchdog();
-      windows.delete(pet.id);
+      // 只删自己：窗口被「会话级藏起」后可能已经重建了同名窗口，晚到的 closed 事件不许误删它
+      if (windows.get(pet.id) === win) windows.delete(pet.id);
+      petStates.delete(pet.id);
+      broadcastPetStates();
       lastRequestedBounds.delete(win.id);
       winMargins.delete(win.id);
       windowIgnore.delete(win.id);
       inputBusy.delete(win.id);
       inputRegions.delete(win.id);
       offBodyMs.delete(win.id);
+      lastPointerZone.delete(win.id);
     });
     win.loadFile(path.join(helperDir, 'index.html'), { query: windowQuery(pet, geo, scale) }).catch((error) => {
       console.error(`[workbuddy-pet-desktop-helper] page load failed (${pet.id}):`, error);
@@ -278,20 +307,105 @@ function createWindows({
       topInsetRatio: String(geo.topInsetRatio),
       panels: JSON.stringify(geo.panels),
       primaryIndex: String(geo.primaryIndex),
+      // X11 的窗口管理器把普通窗口钳在工作区内，窗口探不出屏幕；Windows / macOS 没这个限制。
+      // 渲染端据此决定要不要把钳掉的量转成本体在窗口内的偏移（见 fitWindow）。
+      isWindowClampedToWorkArea: process.platform === 'linux' ? '1' : '0',
     };
   }
 
-  /** 按 DSH_PET_PETS 建齐所有窗口。 */
+  /** 按 DSH_PET_PETS 建齐所有窗口。会话内被藏起来的（sessionHidden）这次不建。 */
   function createPetWindows() {
     const geo = deskGeometry();
     const scale = dpi.petScale();
-    for (const pet of petsFromEnv()) windows.set(pet.id, createPetWindow(pet, geo, scale));
+    for (const pet of petsFromEnv()) {
+      // 描述符一律记下：藏起来的宠物也要能原样重建（否则「叫回来」时没有 size / index）
+      petDescriptors.set(pet.id, pet);
+      if (sessionHidden.has(pet.id)) continue;
+      windows.set(pet.id, createPetWindow(pet, geo, scale));
+    }
     startTaskbarWatchdog();
+  }
+
+  /**
+   * 会话级藏起一只宠物：关掉它的窗口（顺带停掉动画解码），配置一个字都不改。
+   *
+   * 这是托盘「藏一下」的落点。写盘版（display=none）会把临时动作固化成永久设置：
+   * 下次启动 DSH 时没有桌面宠物 → 宿主连 Helper 都不拉 → 托盘图标也没有 → 用户再也切不回来
+   * （上游 issue #383）。本次运行内生效则没有这个问题：配置仍是 desktop，下次启动照旧回来。
+   * @param petId - 宠物 id。
+   * @returns 藏起来了为 true（窗口本来就不在也算）。
+   */
+  function hidePet(petId) {
+    sessionHidden.add(petId);
+    const win = windows.get(petId);
+    if (!win) return true;
+    // 先从表里摘掉再 destroy：closed 事件是异步的，晚到时不能误删（重建出来的）同名窗口
+    windows.delete(petId);
+    try {
+      win.destroy();
+    } catch (e) {
+      console.error('[workbuddy-pet-desktop-helper] window destroy failed:', String(e && e.message ? e.message : e));
+    }
+    return true;
+  }
+
+  /**
+   * 会话级叫回一只宠物：按原描述符重建窗口（index 与渲染端取宠物的下标保持一致）。
+   *
+   * 只有「本来就有桌面窗口」的宠物叫得回来：配置里就没它（display=web/none）时宿主不会
+   * 把它列进 DSH_PET_PETS，本进程没有它的描述符，那种情况由托盘改配置（走宿主重启）来办。
+   * @param petId - 宠物 id。
+   * @returns 叫回来了为 true；没有描述符（本来就不在桌面）时为 false。
+   */
+  function showPet(petId) {
+    sessionHidden.delete(petId);
+    if (windows.has(petId)) return true; // 窗口还在（没被藏过）：不必重建
+    const pet = petDescriptors.get(petId);
+    if (!pet) return false;
+    const geo = deskGeometry();
+    const scale = dpi.petScale();
+    windows.set(pet.id, createPetWindow(pet, geo, scale));
+    return true;
+  }
+
+  /**
+   * 这只宠物此刻是否被会话级藏起来了。
+   * @param petId - 宠物 id。
+   * @returns 藏起来了为 true。
+   */
+  function isPetHidden(petId) {
+    return sessionHidden.has(petId);
+  }
+
+  /**
+   * 关掉当前全部宠物窗口。
+   *
+   * 不先关掉的话旧窗口会留在桌面上（Map 里被覆盖的只是引用）。两种模式都调它：应用模式改显示
+   * 位置时重建一次，主屏缩放自查发现缓存过期时也重建一次。
+   */
+  function closeAllPetWindows() {
+    for (const win of windows.values()) {
+      try {
+        win.destroy();
+      } catch (e) {
+        console.error('[workbuddy-pet-desktop-helper] window destroy failed:', String(e && e.message ? e.message : e));
+      }
+    }
+    windows.clear();
+    petStates.clear();
+    if (petStateTimer !== null) {
+      clearTimeout(petStateTimer);
+      petStateTimer = null;
+    }
   }
 
   return {
     state: { windows, lastRequestedBounds, winMargins, windowIgnore, inputBusy, inputRegions, offBodyMs, petStates },
     create: createPetWindows,
+    closeAll: closeAllPetWindows,
+    hidePet,
+    showPet,
+    isPetHidden,
     geometry: deskGeometry,
     setWindowIgnore,
     updatePetState,

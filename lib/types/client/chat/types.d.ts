@@ -41,9 +41,27 @@ export interface PanelData {
         readonly ts: number;
         readonly phase: 'loading' | 'playing' | 'failed';
     } | null;
+    /** 头像地址的破缓存版本号：打开面板与刷新时换一个，浏览器才会重新取图（换过头像后尤其需要）。 */
+    readonly avatarVersion: number;
 }
 /** 需要二次确认的破坏性操作：用面板内的确认条，不用浏览器原生 `confirm`。 */
 export type ConfirmKind = 'delete-selected' | 'clear-all' | 'clear-orphans';
+/** 输入框按键的最小形状：原生 KeyboardEvent 与 React 合成事件都能直接传。 */
+export interface DraftKeyEvent {
+    readonly key: string;
+    readonly shiftKey: boolean;
+    /** 输入法吞键时的老标志（React 合成事件也保留了它）。 */
+    readonly keyCode?: number;
+    /** 自动重复：长按时由系统补发。 */
+    readonly repeat?: boolean;
+    /** 原生事件直接带；React 合成事件只挂在 {@link DraftKeyEvent.nativeEvent} 上。 */
+    readonly isComposing?: boolean;
+    /** React 合成事件的原始事件。 */
+    readonly nativeEvent?: {
+        readonly isComposing?: boolean;
+    };
+    readonly preventDefault: () => void;
+}
 /** hook 返回：状态、派生值、动作与列表引用。 */
 export interface ChatPanelState extends PanelData {
     /** 当前要渲染的轮（已经按 {@link PanelData.visibleRounds} 截过）。 */
@@ -56,6 +74,12 @@ export interface ChatPanelState extends PanelData {
     readonly assetRoot: string;
     /** 当前条目保留的轮数（`chatMemoryRounds`）；配置里没有时不画记忆边界线。 */
     readonly memoryRounds: number | undefined;
+    /** 历史确实多于记忆轮数、画得出那条线；为假时「记忆线」按钮置灰。 */
+    readonly hasMemoryLine: boolean;
+    /** 滚到记忆分界线；线还在未放出的更早分页里时先把它放出来。 */
+    readonly jumpToMemory: () => void;
+    /** 重读配置与历史（改完对话配置不必刷新整个页面）。 */
+    readonly refresh: () => void;
     /** 当前这只宠物实际在用的人设正文；空串 = 实例与条目都没写。 */
     readonly persona: string;
     /** 展开 / 收起人设卷帘。 */
@@ -89,6 +113,12 @@ export interface ChatPanelState extends PanelData {
     /** 关闭图片放大。 */
     readonly closeImage: () => void;
     readonly setDraft: (text: string) => void;
+    /** 输入框按键：真回车且输入法没在组合时发送，其余原样交给输入框。 */
+    readonly onDraftKeyDown: (event: DraftKeyEvent) => void;
+    /** 输入法开始组合（对应 textarea 的 compositionstart）。 */
+    readonly onDraftCompositionStart: () => void;
+    /** 输入法结束组合（对应 textarea 的 compositionend）。 */
+    readonly onDraftCompositionEnd: () => void;
     /** 点播某一轮的回答：请求合成 → 播放 → 归位，阶段写进 {@link PanelData.speaking}。 */
     readonly speakRound: (ts: number, text: string) => void;
     /** 让宠物重演某一轮回答里演过的动作（名称来自记忆里的 `action`）。 */

@@ -35,10 +35,14 @@ function registerIpc({ ipcMain, petWindows, shell, openTarget, petRoute }) {
       petWindows.state.lastRequestedBounds.set(win.id, key);
       win.setContentBounds(rect, false);
     }
-    // 窗口余量（左右/上）：命中区判定的依据，余量四边不再相等。
+    // 窗口原点到本体原点的距离（左/上）：命中区判定的依据。它不再恒等于余量——窗口被系统钳回
+    // 工作区后本体在窗口内的偏移变大，右侧只剩「窗口宽 − 本体宽 − 左偏移」，一并算出并记下。
     const ml = Number(bounds?.marginL);
     const mt = Number(bounds?.marginT);
-    if (Number.isFinite(ml) && Number.isFinite(mt)) petWindows.state.winMargins.set(win.id, { l: ml, t: mt });
+    const bodyWidth = Number(bounds?.size);
+    if (Number.isFinite(ml) && Number.isFinite(mt) && Number.isFinite(bodyWidth)) {
+      petWindows.state.winMargins.set(win.id, { l: ml, t: mt, r: rect.width - ml - bodyWidth });
+    }
     // 碰撞站场的位置必须用包围盒左上角（渲染端显式上报 boxX/boxY）：窗口坐标 = 包围盒 − margin，
     // 直接拿窗口坐标会让跨窗检测整体错位。
     const petId = [...petWindows.state.windows.keys()].find((id) => petWindows.state.windows.get(id) === win);
@@ -63,23 +67,6 @@ function registerIpc({ ipcMain, petWindows, shell, openTarget, petRoute }) {
         vy: Number.isFinite(vy) ? vy : 0,
       });
     }
-  });
-
-  // 飞行状态上报（碰撞站场）：renderer 飞行中每 ~30ms 上报一次自己的位置/速度/尺寸
-  ipcMain.on('pet:report-flight', (event, state) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) return;
-    const petId = [...petWindows.state.windows.keys()].find((id) => petWindows.state.windows.get(id) === win);
-    if (!petId) return;
-    const s = state || {};
-    const x = Number(s.x);
-    const y = Number(s.y);
-    const vx = Number(s.vx);
-    const vy = Number(s.vy);
-    const size = Number(s.size);
-    const bottomPad = Number(s.bottomPad);
-    if (![x, y, vx, vy, size, bottomPad].every(Number.isFinite)) return;
-    petWindows.updatePetState(petId, { x, y, vx, vy, size, bottomPad });
   });
 
   // 碰撞结果转发：飞行方窗口检测到撞到 targetId → 把动量结果（目标新初速）转发给目标窗口
@@ -163,21 +150,32 @@ function registerIpc({ ipcMain, petWindows, shell, openTarget, petRoute }) {
     });
   };
 
-  // 去向由宿主形态决定：desktop 用应用自注册的 dsh:// 协议把主窗口叫回前台（已运行则被单实例锁
-  // 拦下、宿主收到 second-instance 后聚焦；未运行则协议直接把应用拉起来），比 spawn 宿主 exe 干净；
-  // site 则是原行为：系统默认浏览器打开站点。
+  // 应用自注册的 dsh:// 协议：已运行时把主窗口提到前台，未运行则直接把应用拉起来。
+  // 只有 desktop 形态能发——协议是系统级注册的，dsh web 形态下发它会把桌面版 DSH 拉起来。
+  const focusDesktopApp = () => shell.openExternal('dsh://open');
+
+  // 去向由宿主形态决定：desktop 把主窗口叫回前台，比 spawn 宿主 exe 干净；site 则是原行为：
+  // 系统默认浏览器打开站点。
   ipcMain.on('pet:open-site', (event, payload) => {
     const url = payload && typeof payload === 'object' ? String(payload.url || '') : '';
     if (!/^https?:[/][/]/.test(url)) return;
     if (openTarget === 'desktop') {
       // 协议未注册（绿色版 / 注册表被清）时回落成打开站点，至少不是"点了没反应"
-      shell.openExternal('dsh://open').catch((error) => {
+      focusDesktopApp().catch((error) => {
         console.error('[workbuddy-pet-desktop-helper] open dsh:// failed, falling back to site:', error);
         openSite(url);
       });
       return;
     }
     openSite(url);
+  });
+
+  // 只叫窗口、不改去向：被别的窗口挡住时把主窗口提到前台。
+  ipcMain.on('pet:focus-host', () => {
+    if (openTarget !== 'desktop') return;
+    focusDesktopApp().catch((error) => {
+      console.warn('[workbuddy-pet-desktop-helper] focus host failed:', error && error.message);
+    });
   });
 
   /**

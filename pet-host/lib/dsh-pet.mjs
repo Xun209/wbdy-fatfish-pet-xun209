@@ -49,9 +49,13 @@ export async function loadDshPet(dshPetRoot) {
  * @param {{value: number}} options.portRef - 目前綁定的 port（服務先起、插件後套用，port 要能後填）。
  * @param {{value: string}} options.originRef - 服務 origin（同上，埠號順延時要跟著換）。
  * @param {object} options.ai - 模型後端（OpenAI 相容的 ctx.llm 實作；未接金鑰時為 null）。
+ * @param {string} [options.token] - 寫端點令牌：宿主半側要拿它啟動桌面 Helper，
+ *   否則 Helper 的 bridge 轉發不帶令牌 → 宿主守門一律 403（症狀：桌面寵物右鍵
+ *   「顯示位置」等寫操作點了沒反應）。獨立 Helper 進程不是 APP 模式，拿不到
+ *   DSH_PET_APP_TOKEN，所以這裡把主機的令牌原樣傳下去。
  * @returns {object} 偽 ctx。
  */
-export function createHostContext({ logger, routes, portRef, originRef, ai }) {
+export function createHostContext({ logger, routes, portRef, originRef, ai, token }) {
   /** effect 收集到的清理函式；釋放時「後註冊先釋放」（與 DSH 一致）。 */
   const disposers = [];
   /** 插件 provide 出來的服務。 */
@@ -59,58 +63,16 @@ export function createHostContext({ logger, routes, portRef, originRef, ai }) {
   /** 初始化期間的失敗（單項失敗不拖垮整個主機）。 */
   const failures = [];
 
-  const context = {
-    /**
-     * Cordis 的 effect 語義：跑一次註冊函式並收集它返回的釋放函式。
-     *
-     * 為什麼要自己收集：插件卸載（或主機退出）時必須能一次性收乾淨，
-     * 否則桌面 Helper 會變成孤兒進程。
-     */
-    effect(setup, label) {
-      try {
-        const dispose = setup();
-        if (typeof dispose === 'function') disposers.push(dispose);
-        return dispose;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        failures.push(`${label ?? '未標註'}: ${message}`);
-        logger.error(`初始化「${label ?? '未標註'}」失敗（已跳過，不影響其它部分）：${message}`);
-        return undefined;
-      }
-    },
-
-    /** 提供一個服務。 */
-    provide(name, value) {
-      services.set(name, value);
-      return () => {
-        if (services.get(name) === value) services.delete(name);
-      };
-    },
-
-    /**
-     * 取服務。
-     *
-     * 語義與 DSH 的 `ctx.get(name, required)` 一致：取不到回 undefined，不拋。
-     * 插件的 setup.ts 會用 `ctx.get('speechToText')` 這類軟取，
-     * 裸讀 ctx 的嚴格 getter 會拋錯——那正是 DSH 裡踩過的坑。
-     */
-    get(name) {
-      if (services.has(name)) return services.get(name);
-      return undefined;
-    },
-
-    /**
-     * 監聽 DSH 會話事件。
-     *
-     * WorkBuddy 沒有 DSH 的事件系統，狀態改由「狀態檔 → POST /work-status」這條路進來。
-     * 回一個可呼叫的釋放函式：插件會把它交給 effect 收集，語義不能缺。
-     */
-    on() {
-      return () => {};
-    },
-
-    logger,
-
+  /**
+   * 內建服務：宿主半側要的那些能力。
+   *
+   * ★ 為什麼要放進 `get()` 的查找鏈（而不是只當 ctx 的屬性）：
+   *   0.4.9 的宿主半側改成**全部軟取**（`ctx.get(name, false)`）——它不再宣告
+   *   `inject`，因為宣告了就會讓插件行在服務缺席時一直 pending，把 DSH 的啟動流程掛死。
+   *   同一份軟取程式碼在 WorkBuddy 版也會走同一條路，所以這裡的 `get()` 必須
+   *   能取到內建服務；取不到 → 路由註冊不上、碎碎念與對話全部失效。
+   */
+  const builtins = {
     /**
      * webServer 替身：插件把路由註冊上來，我們的 HTTP 服務再按同一份表分發。
      *
@@ -174,6 +136,73 @@ export function createHostContext({ logger, routes, portRef, originRef, ai }) {
       },
     },
   };
+
+  const context = {
+    /**
+     * Cordis 的 effect 語義：跑一次註冊函式並收集它返回的釋放函式。
+     *
+     * 為什麼要自己收集：插件卸載（或主機退出）時必須能一次性收乾淨，
+     * 否則桌面 Helper 會變成孤兒進程。
+     */
+    effect(setup, label) {
+      try {
+        const dispose = setup();
+        if (typeof dispose === 'function') disposers.push(dispose);
+        return dispose;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(`${label ?? '未標註'}: ${message}`);
+        logger.error(`初始化「${label ?? '未標註'}」失敗（已跳過，不影響其它部分）：${message}`);
+        return undefined;
+      }
+    },
+
+    /** 提供一個服務。 */
+    provide(name, value) {
+      services.set(name, value);
+      return () => {
+        if (services.get(name) === value) services.delete(name);
+      };
+    },
+
+    /**
+     * 取服務。
+     *
+     * 語義與 DSH 的 `ctx.get(name, required)` 一致：取不到回 undefined，不拋。
+     * 查找順序：插件 provide 的 → 內建的（webServer / llm / credentials / …）。
+     *
+     * ★ 內建服務必須在這條鏈上：0.4.9 的宿主半側一律用 `ctx.get(name, false)` 軟取
+     *   服務（不再宣告 inject），取不到就當服務不存在 → 路由註冊不上、模型功能全失效。
+     */
+    get(name) {
+      if (services.has(name)) return services.get(name);
+      return builtins[name];
+    },
+
+    /**
+     * 監聽 DSH 會話事件。
+     *
+     * WorkBuddy 沒有 DSH 的事件系統，狀態改由「狀態檔 → POST /work-status」這條路進來。
+     * 回一個可呼叫的釋放函式：插件會把它交給 effect 收集，語義不能缺。
+     */
+    on() {
+      return () => {};
+    },
+
+    logger,
+
+    /**
+     * 寫端點令牌：主機的守門（server.mjs 的 guard）用它判斷寫請求是否放行。
+     *
+     * 宿主半側啟動桌面 Helper 時要把這個令牌傳下去（見 lib/index.js 的
+     * DSH_PET_TOKEN）：Helper 的 bridge 轉發帶上它，寫端點才不會被 403。
+     */
+    hostToken: token,
+  };
+
+  // 內建服務同時掛成屬性：舊版宿主半側是直接讀 ctx.llm / ctx.webServer 的。
+  // 兩種取法都留著 → 新舊兩版宿主半側都能跑。
+  Object.assign(context, builtins);
 
   return {
     ctx: context,

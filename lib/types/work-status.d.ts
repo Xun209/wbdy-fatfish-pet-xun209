@@ -60,10 +60,12 @@ export declare function currentTaskFromTodo(event: {
         }>;
     };
 }): string | null;
-/** 工作状态快照（/work-status 端点响应体）：state 为主状态；task 为 todo 详情（可 null）。 */
+/** 工作状态快照（= /state 里 sections.workStatus 的 data）：state 为主状态；task 为 todo 详情（可 null）。 */
 export interface WorkStatusSnapshot {
     state: HostWorkStatusState | null;
     task: string | null;
+    /** 当前展示条目所属会话；空闲或外部槽（`api`）时为 null，客户端据此决定气泡能不能点。 */
+    sessionId: string | null;
     ts: number;
 }
 /** 每会话聚合条目。 */
@@ -74,6 +76,8 @@ export interface SessionWorkEntry {
     seq: number;
     /** 任务详情文案；null = 该会话没有清单。 */
     task: string | null;
+    /** 该条目所属会话；`pickDisplayed` 只遍历 values，所以带着它才能知道展示的是哪一条。 */
+    sessionId: string;
 }
 /** 展示优先级：waiting > error > working > thinking > result > success。
  *  result 高于 success：任何会话的进行中过渡态都不被别处已完成态压过，防中途庆祝；同档按最近更新优先。 */
@@ -106,6 +110,6 @@ export declare class WorkStatusStore {
     clear(sessionId: string): boolean;
     /** 展示快照（对象引用稳定，供 /work-status 直接序列化）。 */
     snapshot(): WorkStatusSnapshot;
-    /** 重算展示：state 与 task 任一变化才更新 ts（轮询侧据此触发，两端都靠它刷新）。 */
+    /** 重算展示：state / task / sessionId 任一变化才更新 ts（轮询侧据此触发，两端都靠它刷新）。 */
     private refresh;
 }

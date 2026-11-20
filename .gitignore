@@ -1,0 +1,18 @@
+# 打包與建置產物
+dist/
+node_modules/
+
+# 運行期日誌與狀態（不進版本庫：每台機器都不一樣，且含本機路徑）
+*.log
+pet-host.log
+usage-overlay.log
+
+# 開發殘留
+*.bak
+*.with15-45
+*.orig
+*.pyc
+__pycache__/
+
+# WorkBuddy 執行期的鎖目錄（.in_use/<pid>）
+.in_use/

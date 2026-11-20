@@ -1,31 +1,20 @@
-/**
- * 「按住说话」的悬停快捷键：按住 `M` 开录，松手收尾。
- *
- * 管的是「按下到松开」这一段，不是一次按键。按住期间系统持续补发重复的 keydown，
- * 而弹窗一开焦点就进了输入框，不拦就会灌一串 m，所以这里**不看焦点**：
- * 闸门只有 isArmed（鼠标在宠物上，或光标在宠物自己的弹窗里），开录时由调用方 blur 输入框。
- * 只做判定与状态，不碰 DOM 与录音。
- * @module dsh-pet/src/shared/chat/hear-hold
- */
 import type { HotkeyEvent } from '../hotkey.ts';
 /** 快捷键的显示文案（设置页用）。与 {@link isHearHotkey} 的按键保持同一份事实。 */
 export declare const HEAR_HOTKEY_HINT = "M \u952E";
 /**
- * 这次按下该不该被「按住说话」接走。
- *
- * 只认键名与修饰键，不看焦点——弹窗一打开焦点就在输入框里，那时恰恰是最想按住说话的时候。
+ * 这次按下该不该被「按住说话」接走：与其他悬停键共用同一条判据。
  *
  * @param e - 键盘事件。
- * @returns 裸按 `V`（含大写）时为 true，带 Ctrl/Meta/Alt 时为 false。
+ * @returns 裸按 `M`（含大写）、且焦点不在可编辑元素上时为 true。
  */
 export declare function isHearHotkey(e: HotkeyEvent): boolean;
 /** 状态机的前置判据与两个动作。 */
 export interface HearHoldHooks {
     /**
-     * 现在该不该响应按下。
+     * 现在该不该响应按下：鼠标停在这只宠物身上，或焦点在宠物自己的弹窗里。
      *
-     * 两个来源：鼠标停在这只宠物身上，或光标还在宠物自己的对话弹窗里——
-     * 后者是「弹窗开着、焦点在输入框」的那条路，正是按住说话的主场景。
+     * 后一条留的是「焦点在麦克风按钮这类非可编辑元素上」这条路；在输入框里打字由
+     * {@link isHearHotkey} 挡在前面。
      */
     isArmed: () => boolean;
     /** 按下：打开对话弹窗并开始录音。 */

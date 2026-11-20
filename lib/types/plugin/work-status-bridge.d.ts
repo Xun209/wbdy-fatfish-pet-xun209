@@ -6,8 +6,8 @@
  * @module dsh-pet/src/host/plugin/work-status-bridge
  */
 import type { HostSetup } from './setup.ts';
-/** 工作状态桥的输入：装配期对象与更早的工厂。 */
-export type WorkStatusBridgeInput = {} & Pick<HostSetup, 'state'> & Pick<HostSetup, 'workStatus'>;
+/** 工作状态桥的输入：轮询快照、工作状态 store，以及判定「外部槽」用的哨兵会话 id。 */
+export type WorkStatusBridgeInput = Pick<HostSetup, 'state' | 'workStatus' | 'EXTERNAL_WORK_SESSION'>;
 /**
  * 创建工作状态桥。
  */

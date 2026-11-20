@@ -1,4 +1,4 @@
-import type { FontConfig, ModelSelection, Pet, PhysicsParams } from '../../../shared/types.ts';
+import type { FontConfig, ModelSelection, Pet, PhysicsParams, Weights } from '../../../shared/types.ts';
 /** 宿主返回的成品聚合：`main` 是大配置条目，其余键是文件定义的其他宠物条目。 */
 export type MergedConfig = Record<string, Record<string, unknown>>;
 /** 表单要吃的补丁；字段缺省表示「这次响应里没有可信值」。 */
@@ -8,6 +8,8 @@ export interface MainConfigPatch {
     /** 条目级人设正文，作为实例人设「留空时跟随什么」的预览。 */
     entryPrompt?: string;
     notificationsEnabled?: boolean;
+    /** 前台聚焦时也提醒；缺省表示这次响应里没有可信值。 */
+    notifyWhenFocused?: boolean;
     clickSoundEnabled?: boolean;
     whisperImageEnabled?: boolean;
     chatImageEnabled?: boolean;
@@ -15,9 +17,9 @@ export interface MainConfigPatch {
     chatAnimationEnabled?: boolean;
     confineToScreen?: boolean;
     trayEnabled?: boolean;
-    /** 语音播报总开关；缺省表示这次响应里没有可信值。 */
+    /** 手动播报开关：手动触发的碎碎念与对话回复；缺省表示这次响应里没有可信值。 */
     voiceEnabled?: boolean;
-    /** 语音音色 id（宿主已按白名单校验，客户端原样展示）。 */
+    /** 语音音色（`provider/音色` 限定 id；宿主只验形态，客户端原样展示）。 */
     voiceName?: string;
     /** 播放音量系数（0–1）；缺省表示这次响应里没有可信值。 */
     voiceVolume?: number;
@@ -25,10 +27,18 @@ export interface MainConfigPatch {
     voiceWhisperEnabled?: boolean;
     /** 待办提醒的语音开关；缺省表示这次响应里没有可信值。 */
     voiceTodoEnabled?: boolean;
+    /** 工作状态播报开关；缺省表示这次响应里没有可信值。 */
+    voiceNotifyEnabled?: boolean;
+    /** 语音识别实现 id；缺省表示这次响应里没有可信值。 */
+    speechProvider?: string;
+    /** 天气城市覆盖；空串 = 跟随 IP 自动定位（与缺省不同，空串是可信值）。 */
+    environmentCity?: string;
     /** 物理参数：成品已按「内置默认 ← 用户层」填满，缺子键再用内置默认兜底一次。 */
     physics?: PhysicsParams;
     /** 字体：同物理参数。 */
     font?: FontConfig;
+    /** 动作频率权重（main 条目）：缺省表示这次响应里没有可信值。 */
+    animationWeights?: Weights;
     whisperModel?: ModelSelection;
     chatModel?: ModelSelection;
     chatMemoryRounds?: number;

@@ -95,19 +95,20 @@ function createBridge({ isBridge, prefix, origin, token }) {
       body = await request.text();
     }
     let resp;
+    // 先试直连（快，且不受 stdout 管道实现差异影响）；失败再退回 bridge 管道。
     let direct = null;
-    // 先试直连：宿主在同机同端口，直连比「等 stdout 中转」快得多，也不会被管道实现差异卡住。
-    // 直连失败（宿主还没起来 / 端口变了）再退回 bridge 管道。
     try {
       direct = await directFetch(method, url.pathname + url.search, body);
     } catch (e) {
-      console.error('[workbuddy-pet-desktop-helper] direct host fetch failed, falling back to bridge:', String(e && e.message ? e.message : e));
-      dbg('BRIDGE-FALLBACK ' + String(e && e.message ? e.message : e));
+      console.error(
+        '[workbuddy-pet-desktop-helper] direct host fetch failed, falling back to bridge:',
+        String(e && e.message ? e.message : e),
+      );
     }
     if (direct && direct.status < 500) {
-      const headers = { 'access-control-allow-origin': '*' };
-      if (direct.contentType) headers['content-type'] = direct.contentType;
-      return new Response(direct.body, { status: direct.status || 200, headers });
+      const dh = { 'access-control-allow-origin': '*' };
+      if (direct.contentType) dh['content-type'] = direct.contentType;
+      return new Response(direct.body, { status: direct.status || 200, headers: dh });
     }
     resp = await bridgeRequest(method, url.pathname + url.search, body);
     const headers = { 'access-control-allow-origin': '*' }; // 渲染端页面是 file:// 源，scheme 跨源需 CORS
@@ -148,29 +149,10 @@ function createBridge({ isBridge, prefix, origin, token }) {
     return new Response(resp.body ?? '', { status: resp.status || 200, headers });
   }
 
-  /**
-   * 直连宿主 HTTP —— main 进程的 Node fetch，不受浏览器 CORS 限制。
-   *
-   * 为什么需要它：bridge 模式把请求写到 stdout，由宿主读这一行再把应答 POST 回本地回调端口。
-   * 这条链路依赖宿主「读 helper 的 stdout」这一实现细节；宿主换了实现（换了读 stdout 的方式）
-   * 之后，渲染端的每一个请求都会挂到超时，表现为「桌面窗口起来了但没有内容、也不定位」
-   * （窗口停在 0,0 就是「没拿到 config」的特征）。
-   *
-   * 直连用的是同一个 ORIGIN（宿主自己的 web server 地址），只是不经 stdout 中转，
-   * 因此对宿主是透明的普通 HTTP 请求 —— 宿主侧的路由、认证、素材读盘逻辑全都照旧。
-   */
-  /** 诊断日志：写到 <DSH_HOME>/dsh-pet/helper-debug.log（DSH 不落 helper 的 stderr，只能自己写） */
-  function dbg(msg) {
-    try {
-      const fs = require('node:fs');
-      const path = require('node:path');
-      const home = process.env.DSH_HOME || (process.env.USERPROFILE || process.env.HOME || '.') + '/.dsh';
-      const dir = path.join(home, 'dsh-pet');
-      try { fs.mkdirSync(dir, { recursive: true }); } catch {}
-      fs.appendFileSync(path.join(dir, 'helper-debug.log'), new Date().toISOString() + ' ' + msg + '\n');
-    } catch {}
-  }
-
+  // ===== DSH_PET_DIRECT_FALLBACK =====
+  // 直连宿主 HTTP —— main 进程的 Node fetch，不受浏览器 CORS 限制。
+  // bridge 管道依赖宿主「读 helper 的 stdout」这一实现细节，宿主换实现后请求会全部挂到超时；
+  // 直连对宿主是透明的普通 HTTP 请求，路由 / 认证 / 素材读盘逻辑全都照旧。
   async function directFetch(method, url, body) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
@@ -186,20 +168,11 @@ function createBridge({ isBridge, prefix, origin, token }) {
         body,
       });
       const buf = Buffer.from(await r.arrayBuffer());
-      dbg('DIRECT ' + method + ' ' + url + ' -> ' + r.status + ' len=' + buf.length);
-      return {
-        status: r.status,
-        contentType: r.headers.get('content-type') || undefined,
-        body: buf,
-      };
-    } catch (e) {
-      dbg('DIRECT-FAIL ' + method + ' ' + url + ' origin=' + origin + ' err=' + String(e && e.message ? e.message : e));
-      throw e;
+      return { status: r.status, contentType: r.headers.get('content-type') || undefined, body: buf };
     } finally {
       clearTimeout(timer);
     }
   }
-
   /** 与宿主 handlePetRoute 通信：bridge 模式走管道，手动 start-desktop 流退回 HTTP 直连 */
   async function hostRequest(method, url, body) {
     if (isBridge) return bridgeRequest(method, url, body);

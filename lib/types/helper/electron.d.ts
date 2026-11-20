@@ -7,17 +7,31 @@ export declare const defaultHelperMain: string;
 /** 桌面 Helper 的远程调试端口：0 = 不开。排障时本地改成 9222，重启 Helper 后用 chrome://inspect 连。 */
 export declare const DESKTOP_DEBUG_PORT = 0;
 /**
+ * Linux Wayland 会话是否应强制走 XWayland。
+ *
+ * 只在有 XWayland（`DISPLAY` 存在）时可强制；纯 Wayland 只能提示用户切 X11 会话。
+ * @param env - 读取显示环境变量；默认进程环境。
+ * @param platform - 运行平台；默认 `process.platform`。
+ * @returns 需要且能够强制 XWayland 时为 true。
+ */
+export declare function shouldForceXWayland(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): boolean;
+/**
  * 桌面 Helper 的启动参数。
  *
+ * 开关必须排在 Helper 入口脚本之前：Electron 把脚本路径之后的参数当作应用参数。
  * @param helperPath - Helper 入口脚本的绝对路径。
- * @param debugPort - 远程调试端口；0 表示不挂 Chromium 的调试开关。
+ * @param options - `debugPort` 远程调试端口（0 关闭）；`forceX11` 是否加 `--ozone-platform=x11`。
  * @returns 可直接交给 spawn 的参数数组。
  */
-export declare function helperLaunchArgs(helperPath: string, debugPort?: number): string[];
+export declare function helperLaunchArgs(helperPath: string, options?: {
+    debugPort?: number;
+    forceX11?: boolean;
+}): string[];
 /**
- * 解析 Electron 可执行文件，按优先级取第一个存在且非空的候选：显式候选与 DSH_PET_ELECTRON_PATH
- * → 本机 electron npm 包 → $DSH_HOME/electron（下载落地路径）。
- * 只认自己的落地路径，不再去 npm 全局目录 / Program Files / /usr/bin 探测别人装的 Electron。
+ * 解析 Electron 可执行文件，按优先级取第一个存在且非空的候选：显式候选 → DSH_PET_ELECTRON_PATH
+ * → $DSH_HOME/electron（下载落地路径）。
+ * 只认自己的落地路径：不探测 npm 全局目录 / Program Files / /usr/bin，也不借用宿主安装目录里的
+ * electron npm 包——运行中的 Helper 会锁住它，pnpm 重排依赖时无法整体替换（#297）。
  * 都不存在时由 ensureElectronDownload() 在进程内异步下载（不 spawn 子进程，避免 process.execPath
  * 在 Electron 宿主里指向宿主 exe 而崩溃）。
  */

@@ -47,6 +47,10 @@ export declare function normalizeBroadcastDuration(duration: unknown): number | 
 /** 动画联动开关规范化：只有严格 false 才关闭，其余一律按「要联动」。
  *  宽松是有意的：老调用方不会传这个字段，宽松口径保证它们的行为一个字都不变。 */
 export declare function normalizeBroadcastAnim(anim: unknown): boolean;
+/** 播报开关规范化：只有严格 `true` 才念，其余（含 `"true"` 字符串）一律不念。
+ *  缺省不念是有意的：投喂的文本与时机都由调用方决定，默认不该出声——否则任何一次
+ *  高频投喂都会变成持续朗读，而调用方往往意识不到自己打开了扬声器。 */
+export declare function normalizeBroadcastVoice(speak: unknown): boolean;
 /**
  * 把外部给的 { text, image, url, duration, anim } 与当前配置核对成一个结论。
  *

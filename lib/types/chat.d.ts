@@ -1,9 +1,14 @@
 /**
- * 对话生成（host 半侧）：用 DSH 的 LLM 统一抽象层（ctx.llm）生成一句回复。
+ * 对话生成（host 半侧）：用 DSH 的 LLM 统一抽象层生成一句回复。
  *
  * 负责把历史记忆、用户输入与人设拼成一次生成请求，并解析可选的配图标记。
  * 不负责记忆读写与落盘，也不负责写气泡——那些在路由层与两端消费侧。
- * 依赖 ctx.llm、agentDefaultModel（与碎碎念同源）与调用方给的表情包池。
+ * 依赖 agentDefaultModel 与 llm（与碎碎念同源），以及调用方给的表情包池。
+ *
+ * ⚠️ llm 必须**软取**（serviceOf → ctx.get('llm', false)），不能直读 `ctx.llm`：
+ * 本插件的列不声明 inject（硬依赖会把宿主启动押在别人的服务名单上，见 ./plugin/soft-ctx），
+ * 而 DSH 的 ctx 是严格 getter —— 直读未 inject 的属性会抛异常，被 softCtx 兜成 undefined，
+ * 结果就是「LLM 服务不可用」，对话整条路静默失效（碎碎念 ./whisper 走的是同一条软取路径）。
  * 始终成立：候选模型失败要显式回落并留痕；生成失败返回结构化原因，不伪造文案。
  * 契约见 API.md 与 openapi.yaml。
  *
@@ -30,15 +35,22 @@ export interface ChatMemoryMessage {
     ts: number;
     /** 该轮用户上传的图片（附件引用，不含图片本体）；只存不送——历史回放不带图。 */
     image?: PetImageRef;
-    /** 该轮 AI 配的表情包名称（不是条目对象）；只存不送——不进上下文。 */
+    /** 该轮 AI 配的表情包名称（不是条目对象）；回放历史时以 `[图:名称]` 回填给模型（不带图本体）。 */
     meme?: string;
-    /** 该轮 AI 表演的动作名（animations.categories 内的名字）；只存不送——不进上下文。 */
+    /** 该轮 AI 表演的动作名（animations.categories 内的名字）；回放历史时以 `[动作:名称]` 回填。 */
     action?: string;
 }
 /** 动作指令与动作标记的解析都在 ./chat-action：它们只服务对话这条路径，与 /anim 的决策层分开。 */
 /** 一次对话生成的输入。 */
 export interface ChatGenerateInput {
-    /** 宿主上下文（注入 agentDefaultModel / llm）。 */
+    /**
+     * 宿主上下文。
+     *
+     * agentDefaultModel 与 llm 都是**软取**（serviceOf → ctx.get(name, false)）：
+     * 本插件的列不声明 inject（硬依赖会把宿主启动押在别人的服务名单上），
+     * 而 DSH 的 ctx 是严格 getter —— 直读未 inject 的属性会抛异常。
+     * 碎碎念（./whisper）走的是同一条软取路径。
+     */
     readonly ctx: {
         agentDefaultModel: {
             currentSelection(): {

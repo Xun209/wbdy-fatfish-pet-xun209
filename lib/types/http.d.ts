@@ -1,6 +1,26 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 /** 不同扩展名对应的 Content-Type 映射 */
 export declare const MIME: Record<string, string>;
+/** 图片魔数判定需要读到的最大字节数：WebP 要看到第 12 字节。 */
+export declare const IMAGE_HEAD_BYTES = 16;
+/**
+ * 按文件头魔数判定图片类型。
+ *
+ * 只看前 {@link IMAGE_HEAD_BYTES} 字节，不解析完整图片：调用方要么刚写完校验过的字节，
+ * 要么手里没有扩展名可信的文件（附件对象按哈希命名、头像可被用户换成任意格式）。
+ *
+ * @param header - 文件头缓冲（可能不满 {@link IMAGE_HEAD_BYTES}）。
+ * @param size - header 里实际读到的字节数。
+ * @returns 图片的 Content-Type；不是 PNG / JPEG / GIF / WebP 之一时返回 undefined。
+ */
+export declare function imageTypeOf(header: Buffer, size: number): string | undefined;
+/**
+ * 图片 Content-Type → 落盘扩展名。
+ *
+ * @param contentType - {@link imageTypeOf} 的返回值。
+ * @returns 带点的扩展名；不在支持范围内返回 undefined。
+ */
+export declare function imageExtOf(contentType: string): string | undefined;
 /**
  * 规范化并校验请求路径，确保它在 assets 根目录内（防路径穿越）。
  * @returns 规范化后的绝对文件路径；非法（穿越）时返回 undefined。

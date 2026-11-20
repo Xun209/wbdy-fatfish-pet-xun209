@@ -58,7 +58,7 @@ export declare class HelperProcess {
     private launchIdentity;
     /** 是否已经因为「沙箱初始化失败」改用过 `--no-sandbox`（只退一次） */
     private hasSandboxFallbackApplied;
-    /** 当前子进程有没有写过 stdout/stderr：有输出说明 JS 已经跑过，秒退就不能赖沙箱 */
+    /** 当前子进程有没有写过非空白 stdout/stderr：有输出说明 JS 已经跑过，秒退就不能赖沙箱 */
     private hasChildOutput;
     constructor(options?: HelperOptions, logger?: Logger);
     /** 拉起子进程；已有子进程在跑或正在停止时直接返回现有句柄。 */

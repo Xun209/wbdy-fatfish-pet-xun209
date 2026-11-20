@@ -75,7 +75,10 @@ class PetSprite {
       b: m,
       l: m,
     };
-    window.__dshPetDebug.winMargin = this.margin;
+    // 本体在窗口内的偏移：不钳制时等于上面的余量，窗口被系统钳回工作区时变大（见 fitWindow）。
+    // 所有「窗口原点 = 本体位置 − 偏移」的推导都必须用它，不能再直接减 margin。
+    this.winOffset = { x: this.margin.l, y: this.margin.t };
+    window.__dshPetDebug.winOffset = { x: this.margin.l, y: this.margin.t };
     // 宠物包围盒左上角在【工作区】坐标系里的位置（本窗口的位置 = 宠物的位置）
     this.pos = { x: 0, y: 0 };
 
@@ -157,28 +160,13 @@ class PetSprite {
 
   sendBounds(px, py) {
     this.pos = { x: Math.round(px), y: Math.round(py) };
+    // 窗口落位与上报：系统把窗口钳回工作区时，钳掉的量转成本体在窗口内的偏移（见 fitWindow）
+    const fit = this.fitWindow();
+    // 偏移有上限：想要的位置超出可达范围时，本体只能停在实际能到的位置。这里把 pos 拉回现实，
+    // 否则「想要」与「渲染」越差越远——往回拖要先走完这段虚位，宠物才会动，看着像拖不回来。
+    this.pos = { x: Math.round(fit.x + fit.offsetX), y: Math.round(fit.y + fit.offsetY) };
     window.__dshPetDebug.dragPos = { x: this.pos.x, y: this.pos.y };
-    if (window.petBridge) {
-      // 完整状态一次捎带：size/bottomPad 让静止宠物从首帧起就登记进碰撞站场；
-      // vx/vy 带当前速度（飞行中实时值、静止/拖拽 = 0），避免落地后残留旧速度干扰碰撞动量。
-      const fly = this.throwState;
-      window.petBridge.setBounds(
-        toScreen(this.pos.x - this.margin.l + VIEW.x),
-        toScreen(this.pos.y - this.margin.t + VIEW.y),
-        toScreen(this.size + this.margin.l + this.margin.r),
-        toScreen(this.winH + this.margin.t + this.margin.b),
-        toScreen(this.pos.x), // 包围盒左上角（碰撞站场用：窗口坐标 ≠ 包围盒坐标）
-        toScreen(this.pos.y),
-        toScreen(this.size),
-        toScreen(this.bottomPad),
-        fly ? toScreen(fly.vx) : 0,
-        fly ? toScreen(fly.vy) : 0,
-        // 窗口余量（DIP）：主进程据此算宠物身体命中区——余量不再四边相等（上边距按气泡加高），
-        // 不能再按「窗口宽/4」反推（见 pointer-target.js 的 spriteHitRect）。
-        toScreen(this.margin.l),
-        toScreen(this.margin.t),
-      );
-    }
+    this.reportWindow(fit);
     // 位置变了：提示跟的是光标，而光标存视口坐标，窗口一移就必须重摆，否则提示会跟着窗口漂走。
     // 只在显示时重摆（漫游逐帧调本函数，没显示提示时不做无谓的 DOM 写入）。
     if (this.tipOn) this.renderTip();
@@ -186,8 +174,8 @@ class PetSprite {
     this.markPoseDirty();
   }
 
-  // 角落/边距 → 窗口位置；拖拽后按会话内位置（比例）还原——松手不做任何边界夹取，宠物停在哪就算哪
-  // （与浏览器一致：可以完全拖出工作区；漫游仍由 planMove 的边界检查兜底）。
+  // 角落/边距 → 本体位置；拖拽后按会话内位置（比例）还原。
+  // 边界只由 sendBounds 的窗口落位负责，且与网页端同一条规则：命中区至少留 24px 在屏幕内，其余可挂出去。
   position() {
     const W = VIEW.w;
     const H = VIEW.h;
@@ -231,9 +219,9 @@ class PetSprite {
    * 显示器几何变化后就地重挂：抛掷空间作废，并把宠物从可能变成空洞的位置拉回可见区。
    * 拖拽中不动它（用户正握着），飞行中也不动（下一帧物理会按新边界夹取）。
    *
-   * 宠物位置是视口相对坐标，而视口原点会随显示器拓扑平移；prevView 是变化前的视口，
-   * 这里用 S.rebaseCenter 做「世界坐标守恒 + 越界才夹」，比例无条件跟着新视口重写，
-   * 否则每合盖一次就漂一次。
+   * 角落模式的位置是声明式的：每次都按新主屏工作区、配置角落与边距重算，夹取结果绝不写成位置——
+   * 远程桌面接入会先给一块临时大屏再收窄，写下去就把「跟角落」变成「锁在右边缘」。
+   * 自定义位置才按视口比例重算，保住世界坐标。
    */
   relayout(prevView) {
     this.space = null;
@@ -244,15 +232,10 @@ class PetSprite {
       this.position();
       return;
     }
-    const from = prevView || VIEW;
-    const centerOld = { x: this.pos.x + this.halfW, y: this.pos.y + this.halfH };
-    const center = S.rebaseCenter(centerOld, from, VIEW, AREAS);
-    // 平移后（世界坐标守恒）本应落在的位置；与夹取结果不同 = 那块屏真的没了
-    const moved = { x: centerOld.x + from.x - VIEW.x, y: centerOld.y + from.y - VIEW.y };
-    const clamped = center.x !== moved.x || center.y !== moved.y;
-    // customPos 非空 = 用户摆过的位置，语义是相对视口的比例：视口变了必须重写，否则同一个比例
-    // 在新视口里是另一个世界坐标。为空 = 角落模式：没越界就保持「跟主屏角落」，越界才转锁定坐标。
-    if (this.customPos || clamped) {
+    if (this.customPos) {
+      const from = prevView || VIEW;
+      const centerOld = { x: this.pos.x + this.halfW, y: this.pos.y + this.halfH };
+      const center = S.rebaseCenter(centerOld, from, VIEW, AREAS);
       this.customPos = { rx: center.x / VIEW.w, ry: center.y / VIEW.h };
     }
     this.position();
@@ -287,8 +270,8 @@ class PetSprite {
     // 后者含空洞，按它夹菜单会伸进不属于任何显示器的区域。
     const area = S.resolveRect(WORK_AREAS, this.pos.x + this.halfW, this.pos.y + this.halfH);
     if (!area) return null;
-    const winX = this.pos.x + VIEW.x - this.margin.l;
-    const winY = this.pos.y + VIEW.y - this.margin.t;
+    const winX = this.pos.x + VIEW.x - this.winOffset.x;
+    const winY = this.pos.y + VIEW.y - this.winOffset.y;
     const winW = this.size + this.margin.l + this.margin.r;
     const winH = this.winH + this.margin.t + this.margin.b;
     const ax = area.x + VIEW.x;

@@ -39,7 +39,7 @@ export declare function flattenCounters(s: PollState): Record<string, number>;
  *  首拉不要调它（用 flattenCounters 记基线），否则页面刷新会把旧数据重放一遍。 */
 export declare function takeChanged(s: PollState, baseline: Record<string, number>): StateChange[];
 /** `sections.<名>` 里会被消费端分发的那几个叶子。 */
-export type SectionLeafName = 'config' | 'balance' | 'workStatus' | 'notify' | 'menu';
+export type SectionLeafName = 'config' | 'balance' | 'workStatus' | 'notify' | 'menu' | 'focusSession' | 'env';
 /** `pets.<id>.<名>` 里会被消费端分发的那几个叶子。 */
 export type PetLeafName = 'say' | 'anim' | 'position' | 'throw' | 'lock' | 'sleep';
 /** 一次叶子分发的落点：分段叶子，或某只宠物的叶子。 */
@@ -58,12 +58,15 @@ export type LeafTarget = {
  * `a.b`。规则在这里而不是在分发处，是为了能脱离 React 断言——两端共用同一份口径。
  */
 export declare function resolveLeafPath(path: string): LeafTarget | null;
-/** 类型收窄：余额叶子 → `{ state, manual }`。
+/** 类型收窄：余额叶子 → `{ state, manual, petId? }`。
  *  manual = 这次写入是手动触发的（/balance 命令、桌面「查看余额」菜单），由宿主在写入时标记，
- *  消费端据此决定余额不可用时要不要必弹文字说明。形状非法 → null，消费端跳过这一拍。 */
+ *  消费端据此决定余额不可用时要不要必弹文字说明。
+ *  petId = 这次刷新「给谁看」（右键菜单点的那只）；缺省 = 不带归属，所有开了余额的宠物都照常显示。
+ *  形状非法 → null，消费端跳过这一拍。 */
 export declare function readBalance(leaf: StateLeaf): {
     state: BalanceState;
     manual: boolean;
+    petId?: string;
 } | null;
 /** 说话指令（`pets.<id>.say` 的两种形态）。
  *  say：弹一个气泡，duration = 显示时长（毫秒；缺省 10s，0 = 字面意思「不显示」），
@@ -93,6 +96,40 @@ export declare function readSay(leaf: StateLeaf): SayCue | null;
 /** 类型收窄：工作状态叶子 → 快照（形状非法 → null，消费端跳过这一拍）。
  *  与余额不同没有「手动」标记：工作状态永远由 DSH 事件驱动，没有用户主动要的那条路。 */
 export declare function readWorkStatus(leaf: StateLeaf): WorkStatusSnapshot | null;
+/** `sections.env` 的天气段：字段与宿主的 WeatherSnapshot 同形，只留渲染用得到的。 */
+export interface EnvWeather {
+    /** 天气站点名（地名搜索返回的中文名，可能与 IP 给的城市差一个字）。 */
+    readonly city: string;
+    /** 天气短语（如“阴”）。 */
+    readonly summary: string;
+    /** 气温（°C）。 */
+    readonly temperatureC: number;
+    /** 体感温度（°C）。 */
+    readonly apparentC: number;
+    /** 相对湿度（%）。 */
+    readonly humidityPercent: number;
+    /** 风速（km/h）。 */
+    readonly windKph: number;
+    /** WMO 天气码，渲染层可据此配图标。 */
+    readonly code: number;
+    /** 观测时刻（站点当地时间，ISO 字符串）。 */
+    readonly observedAt: string;
+}
+/** `/environment` 写进 `sections.env` 的内容。 */
+export interface EnvState {
+    /** 省 / 州；IP 库没给时缺省。 */
+    readonly region?: string;
+    /** 市；整条定位失败时可能只有省或都没有。 */
+    readonly city?: string;
+    /** 当前天气；查不到时缺省。 */
+    readonly weather?: EnvWeather;
+    /** 只有这只宠物点亮环境气泡。 */
+    readonly petId: string;
+    /** 写入时刻（ms）。 */
+    readonly ts: number;
+}
+/** 类型收窄：环境叶子 → EnvState（形状非法 → null，消费端跳过这一拍）。 */
+export declare function readEnv(leaf: StateLeaf): EnvState | null;
 /** 朝向：left = 素材原样，right = 镜像（渲染端贴 scaleX(-1)）。
  *  与宿主半侧的同名联合体是两份（宿主不 import 本目录），改动时两边要一起改。 */
 export type PetFacing = 'left' | 'right';

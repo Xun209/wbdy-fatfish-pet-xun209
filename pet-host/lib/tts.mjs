@@ -163,6 +163,38 @@ export function percentToSapiRate(percent) {
 }
 
 /**
+ * 把「舊格式」的音色 id 遷到 0.4.9 的 `provider/音色` 形態。
+ *
+ * 為什麼需要遷移：
+ *   DSH 0.4.9 起，語音是「多實作註冊表」，音色 id 唯一形態是 `providerId/voiceId`
+ *   （見 lib/index.js 的 src/host/voice/types.ts 的 splitVoiceId）。
+ *   舊的使用者層設定寫的是裸音色名（如 `zh-CN-XiaoyiNeural`）→ 切不出 provider
+ *   → 解析不到實作 → 合成一律失敗（而且**不會**自動換一個嗓子）。
+ *   WorkBuddy 版的語音走的是 edge 這條路（`@andresaya/edge-tts` 被轉接到 SAPI），
+ *   所以補上前綴 `edge/` 即可 —— 底下的 SAPI 替身仍然只認裸音色名，不受影響。
+ *
+ * 為什麼直接改字串而不解析 JSON 再寫回：
+ *   設定檔是 JSONC（有註解）。解析後寫回會把註解洗掉；
+ *   直接改字串可以保留註解與排版。
+ *
+ * @param {string} text - 設定檔內容。
+ * @returns {{text: string, changed: boolean, from: string, to: string}} 結果。
+ */
+export function migrateVoiceName(text) {
+  const match = /"voiceName"\s*:\s*"([^"]*)"/.exec(text);
+  if (!match) return { text, changed: false, from: '', to: '' };
+  const current = match[1];
+  if (current === '' || current.includes('/')) return { text, changed: false, from: current, to: current };
+  const next = `edge/${current}`;
+  return {
+    text: text.replace(/"voiceName"\s*:\s*"([^"]*)"/, `"voiceName": "${next}"`),
+    changed: true,
+    from: current,
+    to: next,
+  };
+}
+
+/**
  * 在「使用者層設定」把 voiceEnabled 打開。
  *
  * 為什麼寫在使用者層而不是 `assets/config.jsonc`：
@@ -193,20 +225,34 @@ export async function ensureVoiceEnabled({ configFile, packageConfigFile, logger
     text = readFileSync(packageConfigFile, 'utf8');
     note = '使用者層設定不存在 → 以套件預設起頭';
   }
-  if (/"voiceEnabled"\s*:\s*true/.test(text)) {
-    return { changed: false, path: configFile, note: 'voiceEnabled 已經是 true' };
-  }
-  const replaced = text.replace(/"voiceEnabled"\s*:\s*false/, '"voiceEnabled": true');
-  if (replaced === text) {
-    // 沒有這個鍵 → 插到第一個 pet 物件裡（main 就在最前面）
-    const anchor = /"main"\s*:\s*\{/.exec(text);
-    if (!anchor) {
-      return { changed: false, path: configFile, note: '設定檔裡找不到 voiceEnabled 與 main，語音未開啟' };
+  let dirty = false;
+  if (!/"voiceEnabled"\s*:\s*true/.test(text)) {
+    const replaced = text.replace(/"voiceEnabled"\s*:\s*false/, '"voiceEnabled": true');
+    if (replaced !== text) {
+      text = replaced;
+      dirty = true;
+    } else {
+      // 沒有這個鍵 → 插到第一個 pet 物件裡（main 就在最前面）
+      const anchor = /"main"\s*:\s*\{/.exec(text);
+      if (anchor) {
+        const at = anchor.index + anchor[0].length;
+        text = `${text.slice(0, at)}\n    "voiceEnabled": true,${text.slice(at)}`;
+        dirty = true;
+      } else {
+        logger?.warn?.('設定檔裡找不到 voiceEnabled 與 main，語音未開啟');
+      }
     }
-    const at = anchor.index + anchor[0].length;
-    text = `${text.slice(0, at)}\n    "voiceEnabled": true,${text.slice(at)}`;
-  } else {
-    text = replaced;
+  }
+  // 音色 id 遷移（0.4.9 的 provider/音色 形態）。
+  const migrated = migrateVoiceName(text);
+  if (migrated.changed) {
+    text = migrated.text;
+    dirty = true;
+    logger?.info?.(`音色 id 已遷移（0.4.9 的 provider/音色 形態）：${migrated.from} → ${migrated.to}`);
+    note = note || `音色 id 已遷移：${migrated.from} → ${migrated.to}`;
+  }
+  if (!dirty) {
+    return { changed: false, path: configFile, note: note || '語音設定已是目標狀態' };
   }
   mkdirSync(dirname(configFile), { recursive: true });
   writeFileSync(configFile, text, 'utf8');

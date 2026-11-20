@@ -26,8 +26,8 @@ Object.assign(PetSprite.prototype, {
     if (this.tip.textContent !== this.pet.name) this.tip.textContent = this.pet.name;
     const cursor = this.tipCursor;
     if (cursor) {
-      const winX = this.pos.x - this.margin.l;
-      const winY = this.pos.y - this.margin.t;
+      const winX = this.pos.x - this.winOffset.x;
+      const winY = this.pos.y - this.winOffset.y;
       const winW = this.size + this.margin.l + this.margin.r;
       const winH = this.winH + this.margin.t + this.margin.b;
       // 允许显示范围 = 窗口 ∩ 光标所在屏的工作区：只按窗口夹会画到屏幕外，只按工作区夹会落到
@@ -67,9 +67,22 @@ Object.assign(PetSprite.prototype, {
     const workOn = !!(this.workOn && this.workText);
     const whisperOn = !!(this.whisperOn && this.whisperView);
     const balanceOn = !!(this.bubbleOn && this.balanceView);
+    const envOn = !!(this.envOn && this.envState);
     const workTerminal = this.workState === 'success' || this.workState === 'error';
     const slot =
-      workTerminal && workOn ? 'work' : whisperOn ? 'whisper' : balanceOn ? 'balance' : workOn ? 'work' : 'none';
+      workTerminal && workOn
+        ? 'work'
+        : whisperOn
+          ? 'whisper'
+          : balanceOn
+            ? 'balance'
+            : envOn
+              ? 'env'
+              : workOn
+                ? 'work'
+                : 'none';
+    // 记住当前槽位：点击处理在 init.js，必须知道「现在显示的是哪一种气泡」才能分清翻页与跳会话。
+    this.bubbleSlot = slot;
     // 配图两种形态二选一：url 用完整地址，image 按素材根拼表情包路径；样式/class 共用。
     const whisperImg =
       slot === 'whisper'
@@ -86,8 +99,10 @@ Object.assign(PetSprite.prototype, {
     // 可点/展开两个状态类：可点 → 气泡参与命中区（见 syncInputRegions）；index>0 → 更宽的盒与紧凑字号。
     // 展开态仅内置 windows 的窗口明细与用量页使用；custom 各页是对等页面，翻页不切紧凑字号。
     const isCustom = !!(this.balanceState && S.customViews(this.balanceState));
-    const clickable = slot === 'balance' && this.balanceClickable();
-    const expanded = clickable && !isCustom && this.balanceViewIndex > 0;
+    const workClickable = this.workClickable();
+    // 说话气泡同样可点：点下去就是戳破（分流在 init.js，动作是 popWhisper）。
+    const clickable = (slot === 'balance' && this.balanceClickable()) || workClickable || this.whisperClickable();
+    const expanded = slot === 'balance' && clickable && !isCustom && this.balanceViewIndex > 0;
     this.bubble.classList.toggle('is-clickable', clickable);
     this.bubble.classList.toggle('is-expanded', expanded);
     if (slot === 'none') {
@@ -127,6 +142,9 @@ Object.assign(PetSprite.prototype, {
       const views = S.customViews(this.balanceState);
       const page = views[Math.min(this.balanceViewIndex, views.length - 1)];
       if (page) this.bubble.appendChild(this.renderTree(page));
+    } else if (slot === 'env') {
+      // 环境气泡：图标 + 大字气温 + 中文短语 + 三行键值 + 观测脚注（视图与文案来自 shared）
+      this.renderEnvBubbleContent();
     } else {
       // 展开态的行在这里现算：renderBubble 是只读渲染路径，不缓存（余额每轮都在变，缓存反而要同步失效）
       // 每页内容与页数同源（S.balancePageView / S.balancePageCount）：不再按「index>0 即窗口明细」二分化，
@@ -229,5 +247,85 @@ Object.assign(PetSprite.prototype, {
     window.__dshPetDebug.lastBubbleTitle = this.bubble.textContent.slice(0, 60);
     // 气泡内容/尺寸变了 → 重报控件矩形并同步 busy 标记。这里是所有显隐与换内容的汇聚点。
     this.syncInputBusy();
+  },
+
+  /** 环境气泡内容：视图来自 shared 的 envBubbleView（与网页端同一份文案），这里只建 DOM。 */
+  renderEnvBubbleContent() {
+    const view = S.envBubbleView(this.envState);
+    const title = document.createElement('div');
+    title.className = 'pet-bub-title';
+    title.textContent = view.title;
+    this.bubble.appendChild(title);
+    if (view.emptyText !== undefined) {
+      const line = document.createElement('div');
+      line.className = 'pet-bub-row';
+      line.textContent = view.emptyText;
+      this.bubble.appendChild(line);
+      return;
+    }
+    const main = document.createElement('div');
+    main.className = 'pet-env-main';
+    main.appendChild(this.envIconNode(view.icon || []));
+    const temp = document.createElement('span');
+    temp.className = 'pet-env-temp';
+    temp.textContent = view.temperature || '';
+    const summary = document.createElement('span');
+    summary.className = 'pet-env-summary';
+    summary.textContent = view.summary || '';
+    main.append(temp, summary);
+    this.bubble.appendChild(main);
+    for (const row of view.rows) {
+      const line = document.createElement('div');
+      line.className = 'pet-bub-row';
+      const label = document.createElement('span');
+      label.className = 'pet-bub-sub';
+      label.textContent = row.label;
+      const value = document.createElement('span');
+      value.className = 'pet-bub-val';
+      value.textContent = row.value;
+      line.append(label, value);
+      this.bubble.appendChild(line);
+    }
+    if (view.footer !== undefined) {
+      const foot = document.createElement('div');
+      foot.className = 'pet-env-foot';
+      foot.textContent = view.footer;
+      this.bubble.appendChild(foot);
+    }
+  },
+
+  /** 天气图标：把 shared 的几何（path / line / circle）拼成一段 SVG。 */
+  envIconNode(shapes) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.7');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    for (const shape of shapes) {
+      let node;
+      if (shape.kind === 'path') {
+        node = document.createElementNS(NS, 'path');
+        node.setAttribute('d', shape.d);
+      } else if (shape.kind === 'line') {
+        node = document.createElementNS(NS, 'line');
+        node.setAttribute('x1', shape.x1);
+        node.setAttribute('y1', shape.y1);
+        node.setAttribute('x2', shape.x2);
+        node.setAttribute('y2', shape.y2);
+      } else {
+        node = document.createElementNS(NS, 'circle');
+        node.setAttribute('cx', shape.cx);
+        node.setAttribute('cy', shape.cy);
+        node.setAttribute('r', shape.r);
+      }
+      svg.appendChild(node);
+    }
+    const wrap = document.createElement('span');
+    wrap.className = 'pet-env-icon';
+    wrap.appendChild(svg);
+    return wrap;
   },
 });

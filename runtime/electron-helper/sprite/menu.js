@@ -31,6 +31,8 @@ Object.assign(PetSprite.prototype, {
       },
       // 「查看余额」无条件显示：关了 balanceEnabled 的宠物也能点，手动请求不受开关限制，点了一定给答复。
       { label: '查看余额', action: 'show-balance' },
+      // 「查询天气」与余额同一类：宿主强制刷新并写 sections.env，气泡由 /state 驱动。
+      { label: '查询天气', action: 'show-environment' },
       // 「待办事项」是待办面板的唯一入口（单击宠物不再弹面板），排在余额之后。
       { label: '待办事项', action: 'todo', hint: S.TODO_HOTKEY_HINT },
       { label: '碎碎念', action: 'whisper' },
@@ -59,7 +61,7 @@ Object.assign(PetSprite.prototype, {
       { label: '重载配置', action: 'reload' },
       { label: '回到初始位置', action: 'home' },
     ];
-    // 第三方菜单项统一收在「更多」下：0 项不出现；某个 owner 只有 1 项时跳过 owner 那层直接平铺。
+    // 第三方菜单项统一收在「更多」下：label 唯一的直接平铺，label 重名的按 owner 分子菜单。
     // 放在最后——「更多」不插在工具项与动作之间。
     const more = S.buildMoreBranch(this.menuItems);
     const tree = tools.concat(S.buildMenuTree(this.animations), tail, more ? [more] : []);
@@ -115,6 +117,10 @@ Object.assign(PetSprite.prototype, {
     }
     if (leaf.action === 'show-balance') {
       this.showBalanceFromMenu(); // 立即拉余额并展示（无需等 1s 触发轮询，展示路径与周期触发一致）
+      return;
+    }
+    if (leaf.action === 'show-environment') {
+      this.showEnvironmentFromMenu(); // 强制刷新并展示（绕过宿主缓存，理由见该方法注释）
       return;
     }
     if (leaf.action === 'sleep' || leaf.action === 'wake') {
@@ -179,13 +185,27 @@ Object.assign(PetSprite.prototype, {
   // 「查看余额」菜单：POST 动作让宿主刷新余额。结果这里什么都不用做——写叶子会让版本号变，
   // 挂着的长轮询那一拍立刻返回并展示（同一展示路径）。数据只有一个出口（S），菜单只负责让它刷新。
   // 不做 balanceEnabled 门控：手动请求不受开关限制，关了余额的宠物被点一次也该看到数据。
+  // 带 pet：这次只让被点的那只弹（宿主写进叶子的归属）；surface=desktop = 本窗口就是桌面端。
   showBalanceFromMenu() {
-    S.postAction(BALANCE_URL)
+    S.postAction(BALANCE_URL + '?pet=' + encodeURIComponent(this.pet.id) + '&surface=desktop')
       .then((ok) => {
         if (!ok) console.warn('[workbuddy-pet] 菜单查看余额：刷新动作未成功');
       })
       .catch((e) => {
         console.error('[workbuddy-pet] 菜单查看余额异常', e);
+      });
+  },
+
+  // 「查询天气」菜单：与余额同一条路——POST 动作让宿主强制刷新并写 sections.env，
+  // 本端什么都不用做，叶子变了由轮询分发到 showEnvNow。fresh=1 是用户点这个按钮的唯一意义：
+  // 平时对话走缓存（天气 1 小时），手动查必须拿现在的。
+  showEnvironmentFromMenu() {
+    S.postAction(ENVIRONMENT_URL + '?pet=' + encodeURIComponent(this.pet.id) + '&surface=desktop&fresh=1')
+      .then((ok) => {
+        if (!ok) console.warn('[workbuddy-pet] 菜单查询天气：刷新动作未成功 pet=' + this.pet.id);
+      })
+      .catch((e) => {
+        console.error('[workbuddy-pet] 菜单查询天气异常', e);
       });
   },
 

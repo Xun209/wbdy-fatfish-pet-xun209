@@ -67,17 +67,21 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // 手动 start-desktop 流同理，BRIDGE 模式则由宿主决定能否退（见 startTray 的 quitApp）。
 const APP_MODE = process.env.DSH_PET_APP_MODE === '1';
 // 只供同进程应用自己的请求使用，绝不出现在渲染端地址或日志里。
-const APP_TOKEN = APP_MODE ? process.env.DSH_PET_APP_TOKEN : undefined;
+// 【2026-11-20 修】写端点令牌。
+//   APP 模式（同进程）用 DSH_PET_APP_TOKEN；
+//   bridge 模式（独立 Helper 进程）用宿主传下来的 DSH_PET_TOKEN ——
+//   宿主若在写端点前设了守门令牌（WorkBuddy 宠物主机就是），这里的直连请求
+//   来自 Node fetch（不带 Origin / Sec-Fetch-Site），没有令牌就会被守门 403。
+//   症状：桌面宠物右键「对话」→ 送出 → 「对话失败：此端点会调用模型，需要令牌」。
+const APP_TOKEN = APP_MODE ? process.env.DSH_PET_APP_TOKEN : process.env.DSH_PET_TOKEN || undefined;
 app.setName('workbuddy-pet-electron-helper');
 // Windows 任务栏分组：不设 AppUserModelID 时窗口归到 electron.exe 名下，任务栏按钮意外出现就显示
 // Electron 默认图标。必须在 ready 之前调用；独立应用与 DSH 内 helper 用不同 ID，避免被合成一组。
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_MODE ? 'com.dsh.pet.app' : 'com.dsh.pet.helper');
 }
-// 数据目录与 DSH 版分开：两个 Chromium 进程共用同一份 profile 会互踢，
-// 症状是 "Unable to move the cache" 与 "Gpu Cache Creation failed"。
-// 应用模式与 helper 模式各用自己的目录，彼此也不共用。
-app.setPath('userData', path.join(app.getPath('appData'), APP_MODE ? 'workbuddy-pet' : 'workbuddy-pet-electron-helper'));
+// 应用模式只改数据目录、不改应用名：共用同一个 userData 时两个 Chromium 进程会抢同一份 profile 互踢。
+if (APP_MODE) app.setPath('userData', path.join(app.getPath('appData'), APP_MODE ? 'workbuddy-pet' : 'workbuddy-pet-electron-helper'));
 
 /** DPI 探测子进程模式：不建窗口，只把主屏 scaleFactor 打到 stdout 就退出（见 probePrimaryScale） */
 const DPI_PROBE = process.env.DSH_PET_DPI_PROBE === '1';
@@ -225,7 +229,8 @@ const petWindows = createWindows({
   topmostLevel,
   taskbarWatchdogEnabled: taskbarWatchdogEnabledFromEnv(process.env.DSH_PET_TASKBAR_WATCHDOG),
 });
-/** 托盘：显示开关与退出入口。 */
+/** 托盘：显示开关与退出入口。窗口能力传进去：勾选框的「藏一下 / 叫回来」只动进程内会话态，
+ *  不写配置——写盘会让「下次启动 DSH 没有桌宠、连托盘都没有」变成常态（上游 issue #383）。 */
 const tray = createTray({
   app,
   Tray,
@@ -238,7 +243,21 @@ const tray = createTray({
   petRoute: PET_ROUTE,
   platform: TRAY_PLATFORM,
   helperDir: __dirname,
+  petWindows,
 });
+
+/**
+ * 应用模式的重建钩子：同进程里没有「重启 helper 进程」这条路，宿主改完显示位置会调它——
+ * 关窗 → 按新的 DSH_PET_PETS 重建 → 刷新托盘勾选。
+ * 双进程模式不注册：那边重启进程本身就是重建，注册了反而多一条没人走的路径。
+ */
+if (process.env.DSH_PET_IN_PROCESS === '1') {
+  globalThis.__dshPetRebuildUi = async () => {
+    petWindows.closeAll();
+    petWindows.create();
+    await tray.refresh();
+  };
+}
 
 app.whenReady().then(() => {
   // 探测子进程：此时没有 force-device-scale-factor，读到的是 Windows 的真实主屏缩放。
@@ -258,19 +277,6 @@ app.whenReady().then(() => {
       ' petScale=' +
       dpi.petScale(),
   );
-
-  // 诊断：把决定渲染端能不能拿到配置的关键 env 全部落盘
-  try {
-    const fsDbg = require('node:fs');
-    const pathDbg = require('node:path');
-    const homeDbg = process.env.DSH_HOME || (process.env.USERPROFILE || process.env.HOME || '.') + '/.dsh';
-    const dirDbg = pathDbg.join(homeDbg, 'dsh-pet');
-    try { fsDbg.mkdirSync(dirDbg, { recursive: true }); } catch {}
-    const keys = ['DSH_PET_CONFIG_URL','DSH_PET_BRIDGE','DSH_PET_PETS','DSH_PET_OPEN_TARGET','DSH_PET_SITE_URL','DSH_PET_HOST_PID','DSH_PET_APP_MODE'];
-    const dump = keys.map(k => k + '=' + String(process.env[k])).join(' | ');
-    fsDbg.appendFileSync(pathDbg.join(dirDbg, 'helper-debug.log'),
-      new Date().toISOString() + ' HELPER-START pid=' + process.pid + ' BRIDGE=' + BRIDGE + ' ORIGIN=' + ORIGIN + '\n  ' + dump + '\n');
-  } catch {}
 
   if (BRIDGE) {
     // 自定义 scheme 接住渲染端全部请求（配置/余额/碎碎念/广播/素材）
@@ -294,36 +300,6 @@ app.whenReady().then(() => {
 
   linuxPointer?.start();
   petWindows.create();
-
-  // 诊断：把渲染端的 console、加载失败、渲染进程崩溃全部转写到 helper-debug.log。
-  // 渲染端跑在 file:// 源里，它的报错只进 console（主进程 stderr 不落盘），没有这层就完全看不到。
-  try {
-    const cFs = require('node:fs');
-    const cPath = require('node:path');
-    const cHome = process.env.DSH_HOME || (process.env.USERPROFILE || process.env.HOME || '.') + '/.dsh';
-    const cDir = cPath.join(cHome, 'dsh-pet');
-    try { cFs.mkdirSync(cDir, { recursive: true }); } catch {}
-    const cLog = (m) => {
-      try { cFs.appendFileSync(cPath.join(cDir, 'helper-debug.log'), new Date().toISOString() + ' [renderer] ' + m + '\n'); } catch {}
-    };
-    for (const w of petWindows.state.windows.values()) {
-      try {
-        w.webContents.on('console-message', (_e, level, message, line, sourceId) => {
-          cLog('console L' + level + ': ' + message + '  @' + sourceId + ':' + line);
-        });
-        w.webContents.on('did-fail-load', (code, desc, url) => cLog('did-fail-load ' + code + ' ' + desc + ' ' + url));
-        w.webContents.on('preload-error', (_e, p, err) => cLog('preload-error ' + p + ' ' + String(err && err.message ? err.message : err)));
-        w.webContents.on('render-process-gone', (e) => cLog('render-process-gone ' + JSON.stringify(e && e.reason)));
-      } catch {}
-    }
-    cLog('attached to ' + petWindows.state.windows.size + ' window(s)');
-  } catch (e) {
-    try {
-      require('node:fs').appendFileSync(
-        (process.env.DSH_HOME || (process.env.USERPROFILE || '.') + '/.dsh') + '/dsh-pet/helper-debug.log',
-        new Date().toISOString() + ' attach-failed ' + String(e && e.message ? e.message : e) + '\n');
-    } catch {}
-  }
 
   // 合盖/唤醒是任务栏按钮重建最集中的时刻：resume / unlock-screen 后把每只宠物重新摘一次。
   // powerMonitor 只能在 ready 之后使用，所以挂在这里而不是模块顶层。
@@ -361,7 +337,11 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
+  // 主屏缩放自查是「先关窗、再建窗」，两个动作之间窗口数会短暂为 0；新窗口已建好就不算真的全关
+  if (petWindows.state.windows.size > 0) return;
   // 托盘常驻：桌面上没有宠物也要留着，否则「全关掉」就再也切不回来
   if (tray.exists()) return;
+  // 应用模式：窗口是被重建钩子关掉的，不是用户要退出——留着进程等下一次重建
+  if (process.env.DSH_PET_IN_PROCESS === '1') return;
   app.quit();
 });

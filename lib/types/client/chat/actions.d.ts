@@ -35,11 +35,12 @@ export interface ShellDeps {
     /** 每次「加载更早」放出的轮数。 */
     readonly pageRounds: number;
 }
-/** 外壳动作：孤儿清理、确认条分发、「加载更早」。 */
+/** 外壳动作：孤儿清理、确认条分发、刷新与「加载更早」。 */
 export declare function createShellActions(deps: ShellDeps): {
     clearOrphans: () => void;
     ask: (kind: ConfirmKind) => void;
     cancelAsk: () => void;
     confirmAsk: () => void;
+    refresh: () => void;
     showOlder: () => void;
 };
