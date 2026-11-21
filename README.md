@@ -46,6 +46,40 @@ copilot.tencent.com/v2/chat/completions（國際版 www.workbuddy.ai）
 - ★ 全程**唯讀**：登入檔從不被寫回（寫回會破壞客戶端的加密憑據儲存）。
 - ★ 這是**非官方路徑**：上游隨時可能改協議或收緊風控。失效時寵物會自動退回下一級後端。
 
+## 對話與「會呼叫模型」的端點：守門的三條規則
+
+寵物主機的 HTTP 服務（`pet-host/lib/server.mjs`）對**寫端點**設了一道守門：
+沒有令牌的請求一律 403。三條規則決定誰能通過：
+
+| 請求來源 | 放行方式 |
+|---|---|
+| 桌面 Helper 的橋轉發（位姿回報、播放回執） | 走內部回報通道清單（`INTERNAL_REPORT_PATTERNS`），非跨站即免令牌 |
+| **同源**的瀏覽器請求（擴充面板的 overlay 頁、獨立模式頁） | 免令牌 —— Origin 必須精確等於 `http://<host>`，瀏覽器強制、JS 不可偽造 |
+| 桌面 Helper 的**直連**請求（右鍵「對話」→ 送出） | 帶 `X-DSH-Pet-Token` |
+
+★ **2026-11-20 的兩個修正**（使用者回報後修的）：
+
+1. **同源請求連「會呼叫模型」的端點也放行**。
+   症狀：WorkBuddy 介面裡的擴充面板（iframe → `http://127.0.0.1:<port>/fatfish-overlay.html`）
+   的對話框完全沒反應（`POST /chat` 與 `/whisper` 都是 403「此端點會呼叫模型，需要令牌」）。
+   當初不放行是怕「惡意網頁誘導燒額度」，但那個顧慮針對的是**跨站**請求，而跨站本來就被擋死
+   （Host 必須是本機回環 / `sec-fetch-site: cross-site` 一律要令牌 / Origin 必須精確匹配）。
+   所以「同源」＝「確實是本機這個 origin 發起的請求」，跨站仍然要令牌，語意不變。
+
+2. **桌面 Helper 要拿到寫端點令牌**。
+   症狀：桌面寵物右鍵「對話」→ 送出 → 「對話失敗：此端點會呼叫模型，需要令牌」。
+   原因：Helper 是獨立行程，橋轉發的直連請求來自 Node fetch（不帶 Origin / Sec-Fetch-Site），
+   守門認不出它是本機的 → 必須帶令牌。三處配合才通：
+   - `runtime/electron-helper/main.js`：bridge 模式的令牌改從 `DSH_PET_TOKEN` 取
+     （APP 模式仍用 `DSH_PET_APP_TOKEN`）；
+   - `lib/index.js`（上游 dsh-pet 的宿主半側建置物）：spawn Helper 時把宿主的 `hostToken`
+     當 `DSH_PET_TOKEN` 傳下去；
+   - 宿主（WorkBuddy 寵物主機）把自己的守門令牌放進 `ctx.hostToken`。
+
+   ★ `lib/index.js` 是**建置產物**：改它必須回改上游源碼
+   （`dsh-pet/src/host/plugin/desktop/spawn.ts`），否則下次 `tools/sync-from-dsh-pet.mjs`
+   會把修正蓋回去。
+
 ## 目錄結構
 
 ```
