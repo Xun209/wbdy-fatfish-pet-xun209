@@ -57,7 +57,10 @@ function creditsValue(credits) {
 /**
  * 從目錄裡挑一支最便宜的模型（寵物的碎碎念是短句：要快、要省積分）。
  *
- * 排序規則：有倍率的按倍率升序；沒倍率的（例如 "auto"，倍率隨任務浮動）排最後。
+ * ★ 排序規則：有倍率的按倍率升序；沒倍率的（例如 "auto"，倍率隨任務浮動）排最後。
+ * ★ **但倍率不代表「這個帳號能用」**：實測同一帳號下 `hy3` 倍率最低卻回
+ *   「not allowed for user type [personal_free_user]」。
+ *   所以挑完之後仍要經過 {@link probeModelUsable} 實測，確認能調才敢用。
  * @param {Array<{id: string, name: string, credits: string}>} models - 模型目錄。
  * @returns {string} 模型 id；目錄是空回空字串。
  */
@@ -69,6 +72,106 @@ export function pickCheapestModel(models) {
   const withCredits = scored.filter((model) => model.value !== undefined).sort((a, b) => a.value - b.value);
   if (withCredits.length > 0) return withCredits[0].id;
   return scored[0]?.id || '';
+}
+
+/**
+ * 實測一支模型在**這個帳號**下能不能用。
+ *
+ * 為什麼要實測：上游的目錄列的是「產品支援的模型」，不是「這個帳號能調的」。
+ * 實測發現兩類失敗：
+ *   - `model [hy3] is not allowed for user type [personal_free_user]`（帳號等級不允許）
+ *   - `model [glm-5.0] service info not found`（這個帳號沒有這個服務）
+ * 兩種都是 4xx，所以「問一次」就能分辨「不可用」與「暫時故障」。
+ *
+ * @param {string} model - 模型 id。
+ * @param {object} context - 上下文（憑據與客戶端）。
+ * @returns {Promise<{ok: boolean, reason: string}>} 結果。
+ */
+export async function probeModelUsable(model, context) {
+  const { credentials, client } = context;
+  try {
+    const response = await fetch(`${credentials.upstream}/v2/chat/completions`, {
+      method: 'POST',
+      headers: buildHeaders({ credentials, client, model, flow: 'chat' }),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'system', content: 'ping' }],
+        stream: true,
+        max_tokens: 4,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (response.ok) {
+      // 讀掉回應串流（避免連線懸著），內容不重要 —— 問得到就算能用。
+      await response.text().catch(() => '');
+      return { ok: true, reason: '' };
+    }
+    const body = await response.text().catch(() => '');
+    let reason = body.slice(0, 160);
+    try {
+      const parsed = JSON.parse(body);
+      reason = parsed?.msg || parsed?.message || reason;
+    } catch {
+      /* 非 JSON */
+    }
+    return { ok: false, reason: String(reason) };
+  } catch (error) {
+    // 連線層的問題：不能判定「不可用」（可能只是網路抖）→ 當成可用，交給真實請求去處理。
+    return { ok: true, reason: `（無法實測：${error instanceof Error ? error.message : String(error)}）` };
+  }
+}
+
+/**
+ * 從目錄裡挑一支**這個帳號真的能調**的模型。
+ *
+ * 做法：先按倍率排序（省積分），再逐一實測；第一支能用的就是答案。
+ * 最多試 6 支 —— 再多就是上游出問題了，不該讓啟動等太久。
+ *
+ * @param {Array<{id: string, name: string, credits: string}>} models - 模型目錄。
+ * @param {object} context - 上下文（憑據與客戶端）。
+ * @param {object} [options] - 選項。
+ * @param {object} [options.logger] - 日誌出口。
+ * @param {string} [options.preferred] - 使用者指定的模型（優先試它）。
+ * @returns {Promise<{model: string, candidates: string[], rejected: Array<{model: string, reason: string}>}>} 結果。
+ */
+export async function pickUsableModel(models, context, options = {}) {
+  // ★ 順序 = 「依倍率從便宜到貴」，不是目錄順序。
+  //   目錄順序是上游排的（auto、hy4std、hy4flash…），但裡面混著不可用的；
+  //   依倍率排序才能在試第二支時就挑到便宜又可用的那支。
+  const ranked = models
+    .map((model) => ({ id: model.id, value: creditsValue(model.credits) }))
+    .filter((item) => item.id)
+    .sort((a, b) => {
+      // 沒倍率的排最後（倍率隨任務浮動，不能當成免費）
+      if (a.value === undefined && b.value === undefined) return 0;
+      if (a.value === undefined) return 1;
+      if (b.value === undefined) return -1;
+      return a.value - b.value;
+    })
+    .map((item) => item.id);
+
+  const ordered = [];
+  if (options.preferred) ordered.push(options.preferred);
+  for (const id of ranked) {
+    if (!ordered.includes(id)) ordered.push(id);
+  }
+
+  const candidates = [];
+  const rejected = [];
+  for (const id of ordered) {
+    // ★ 試到能用就停，不要一路試到底：
+    //   每一支都要真的打一次上游（一兩秒），全試一輪會讓啟動慢十幾秒。
+    //   依倍率排序保證「第二支」已經是便宜又可用的那一支。
+    if (candidates.length > 0) break;
+    const result = await probeModelUsable(id, context);
+    if (result.ok) {
+      candidates.push(id);
+    } else {
+      rejected.push({ model: id, reason: result.reason });
+      options.logger?.warn?.(`[workbuddy-llm] 模型 ${id} 這個帳號用不了：${result.reason}`);
+    }
+  }
+  return { model: candidates[0] || '', candidates, rejected };
 }
 
 /** AtRest 信封的固定結構（見 workbuddy-to-dsh 的公開演算法）。 */
@@ -597,57 +700,96 @@ function toUpstreamMessages(system, messages) {
 /**
  * 建立 WorkBuddy 的串流生成。
  *
+ * ★ **模型不可用時自動換一支**：上游的模型目錄列的是「產品支援的模型」，
+ *   不等於「這個帳號現在能調的」—— 實測同一個帳號下，
+ *   `hy3` 會回 400「model [hy3] is not allowed for user type [personal_free_user]」，
+ *   另有 8 支回「service info not found」。
+ *   所以：模型被上游拒絕時，記下它不可用，換下一支候選重試。
+ *   （否則寵物會在對話時才爆錯，而症狀看起來像「沒接模型」。）
+ *
  * @param {object} options - 選項。
  * @param {string} options.model - 模型 id。
+ * @param {string[]} [options.fallbacks] - 備選模型（依序嘗試）。
  * @param {unknown} options.system - system 提示。
  * @param {unknown} options.messages - 訊息陣列。
  * @param {number} [options.temperature] - 溫度。
  * @param {object} options.logger - 日誌出口。
  * @returns {AsyncGenerator<{type: 'text', text: string}>} 文字塊。
  */
-export async function* streamWorkBuddy({ model, system, messages, temperature, logger }) {
+export async function* streamWorkBuddy({ model, fallbacks, system, messages, temperature, logger }) {
   const client = findWorkBuddyClient();
   if (!client) throw new Error('本機沒有找到 WorkBuddy 桌面端');
   const credentials = await readWorkBuddyCredentials();
   if (!credentials) throw new Error('WorkBuddy 沒有登入（或讀不到登入憑據）');
 
-  const target = model || DEFAULT_WORKBUDDY_MODEL;
-  const response = await fetch(`${credentials.upstream}/v2/chat/completions`, {
-    method: 'POST',
-    headers: buildHeaders({ credentials, client, model: target, flow: 'chat' }),
-    body: JSON.stringify({
-      model: target,
-      messages: toUpstreamMessages(system, messages),
-      temperature: typeof temperature === 'number' ? temperature : 1,
-      stream: true,
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`WorkBuddy 上游回 ${response.status}${body ? '：' + body.slice(0, 200) : ''}`);
-  }
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for await (const chunk of response.body) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let index;
-    while ((index = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, index).trim();
-      buffer = buffer.slice(index + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '' || payload === '[DONE]') continue;
-      try {
-        const parsed = JSON.parse(payload);
-        const delta = parsed?.choices?.[0]?.delta?.content;
-        if (typeof delta === 'string' && delta !== '') yield { type: 'text', text: delta };
-      } catch {
-        /* 不是 JSON 的行（心跳等）忽略 */
-      }
+  const candidates = [model || DEFAULT_WORKBUDDY_MODEL, ...(Array.isArray(fallbacks) ? fallbacks : [])].filter(
+    (id, index, list) => typeof id === 'string' && id !== '' && list.indexOf(id) === index,
+  );
+  const tried = [];
+  let lastError = null;
+
+  for (const target of candidates) {
+    let response = null;
+    try {
+      response = await fetch(`${credentials.upstream}/v2/chat/completions`, {
+        method: 'POST',
+        headers: buildHeaders({ credentials, client, model: target, flow: 'chat' }),
+        body: JSON.stringify({
+          model: target,
+          messages: toUpstreamMessages(system, messages),
+          temperature: typeof temperature === 'number' ? temperature : 1,
+          stream: true,
+        }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (error) {
+      // 網路層的問題（逾時等）：換模型也救不了，直接往外丟。
+      throw new Error(`WorkBuddy 上游連線失敗：${error instanceof Error ? error.message : String(error)}`);
     }
+
+    if (response.ok) {
+      if (tried.length > 0) {
+        logger?.warn?.(
+          `[workbuddy-llm] 模型 ${tried.join('、')} 不可用，已改用 ${target}`,
+        );
+      }
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let index;
+        while ((index = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, index).trim();
+          buffer = buffer.slice(index + 1);
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '' || payload === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed?.choices?.[0]?.delta?.content;
+            if (typeof delta === 'string' && delta !== '') yield { type: 'text', text: delta };
+          } catch {
+            /* 不是 JSON 的行（心跳等）忽略 */
+          }
+        }
+      }
+      logger?.debug?.(`[workbuddy-llm] 回覆完成 model=${target}`);
+      return;
+    }
+
+    const body = await response.text().catch(() => '');
+    lastError = new Error(`WorkBuddy 上游回 ${response.status}${body ? '：' + body.slice(0, 200) : ''}`);
+    // 4xx（模型不允許 / 服務不存在）→ 換一支；其他狀態碼（5xx、429）→ 直接報錯
+    // （429 是額度或限流，換模型沒用，還會白白多燒幾次請求）。
+    if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+      tried.push(target);
+      logger?.warn?.(`[workbuddy-llm] 模型 ${target} 不可用（${response.status}），換下一支`);
+      continue;
+    }
+    throw lastError;
   }
-  logger?.debug?.(`[workbuddy-llm] 回覆完成 model=${target}`);
+
+  throw lastError ?? new Error('WorkBuddy 上游沒有可用的模型');
 }
 
 export { FALLBACK_MODEL, toUpstreamMessages };

@@ -36,7 +36,7 @@ import {
   fetchWorkBuddyCatalog,
   findWorkBuddyClient,
   listWorkBuddyModels,
-  pickCheapestModel,
+  pickUsableModel,
   readWorkBuddyCredentials,
   streamWorkBuddy,
 } from './workbuddy-llm.mjs';
@@ -152,18 +152,25 @@ export function createAi({ stateDir, logger, env = process.env }) {
     // 拿不到就退回本機離線清單（`cli/product.json`，產品級的，但至少不是空的下拉框）。
     const catalog = await fetchWorkBuddyCatalog();
     const models = catalog.length > 0 ? catalog : listWorkBuddyModels();
-    const wanted = env.WORKBUDDY_PET_AI_MODEL?.trim();
-    // 模型選擇：使用者明確指定 → 用；否則用預設那支（目錄裡有就用）；
-    // 連預設都不在目錄裡（上游改版換了 id）→ 挑最便宜的一支，別讓寵物啞掉。
-    const model = wanted
-      ? wanted
-      : models.some((item) => item.id === DEFAULT_WORKBUDDY_MODEL)
-        ? DEFAULT_WORKBUDDY_MODEL
-        : pickCheapestModel(models) || DEFAULT_WORKBUDDY_MODEL;
+
+    // ★ 選模型前先**實測**：上游目錄列的是「產品支援的模型」，
+    //   不等於「這個帳號能調的」（實測：hy3 會回 not allowed for personal_free_user，
+    //   另有 8 支回 service info not found）。
+    //   只按倍率挑會挑中不可用的那支 → 寵物在對話時才爆錯，看起來像「沒接模型」。
+    const preferred = env.WORKBUDDY_PET_AI_MODEL?.trim() || '';
+    const usable = await pickUsableModel(models, { credentials, client }, { logger, preferred });
+    const model = usable.model || preferred || DEFAULT_WORKBUDDY_MODEL;
+    if (usable.rejected.length > 0) {
+      logger?.info?.(
+        `模型目錄裡有 ${usable.rejected.length} 支這個帳號用不了（已略過）：` +
+          usable.rejected.map((item) => item.model).join('、'),
+      );
+    }
     return {
       kind: 'workbuddy',
       provider: 'workbuddy',
       model,
+      fallbacks: usable.candidates,
       baseUrl: credentials.upstream,
       apiKey: '',
       source: `WorkBuddy 桌面端（${client.exe}，帳號 ${credentials.uid.slice(0, 8)}…）`,
@@ -335,6 +342,7 @@ export function createAi({ stateDir, logger, env = process.env }) {
     if (target.kind === 'workbuddy') {
       yield* streamWorkBuddy({
         model: options?.model || target.model,
+        fallbacks: target.fallbacks,
         system: options?.system,
         messages: options?.messages,
         temperature: options?.temperature,

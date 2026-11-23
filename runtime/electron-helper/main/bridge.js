@@ -155,7 +155,14 @@ function createBridge({ isBridge, prefix, origin, token }) {
   // 直连对宿主是透明的普通 HTTP 请求，路由 / 认证 / 素材读盘逻辑全都照旧。
   async function directFetch(method, url, body) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    // ★ 超時要**按端點性質**給，不能一律 5 秒：
+    //   「會呼叫模型」的端點（/chat、/whisper）要等模型回話，
+    //   實測要 6~15 秒 —— 用 5 秒的話每次都超時，
+    //   於是每次都要多走一趟 bridge 管道（慢一倍，還多一次往返）。
+    //   其餘端點（讀設定、讀狀態、素材）15 秒綽綽有餘。
+    const isModelCall = /\/dsh-pet-\d+\/(chat|whisper)(\/|$|\?)/.test(url);
+    const timeoutMs = isModelCall ? 120000 : 15000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
     try {
       const r = await fetch(origin + url, {

@@ -135,6 +135,22 @@ export function createHostContext({ logger, routes, portRef, originRef, ai, toke
         return ai.stream(options);
       },
     },
+
+    /**
+     * 寫端點令牌：主機的守門（server.mjs 的 guard）用它判斷寫請求是否放行。
+     *
+     * 宿主半側啟動桌面 Helper 時要把這個令牌傳下去（見 lib/index.js 的
+     * DSH_PET_TOKEN）：Helper 的 bridge 轉發帶上它，寫端點才不會被 403。
+     *
+     * ★ 形狀要跟宿主半側的讀法一致：`serviceOf(ctx, 'hostToken')?.hostToken`
+     *   —— 取的是**物件裡的 hostToken 欄位**，所以這裡要是 `{ hostToken: '…' }`，
+     *   不是字串本身。放錯形狀 → 取到 undefined → 令牌傳不下去 →
+     *   桌面寵物右鍵「對話」/ 快捷鍵 L 送出 → 403「此端點會呼叫模型，需要令牌」。
+     * ★ 必須放在**這裡**（builtins），不是 context：
+     *   0.4.9 的宿主半側一律用 `ctx.get(name, false)` 軟取服務，
+     *   而 `get()` 查的是 builtins —— 只掛成 ctx 屬性 → 取不到 → 令牌傳不給 Helper。
+     */
+    hostToken: { hostToken: token },
   };
 
   const context = {
@@ -190,18 +206,11 @@ export function createHostContext({ logger, routes, portRef, originRef, ai, toke
     },
 
     logger,
-
-    /**
-     * 寫端點令牌：主機的守門（server.mjs 的 guard）用它判斷寫請求是否放行。
-     *
-     * 宿主半側啟動桌面 Helper 時要把這個令牌傳下去（見 lib/index.js 的
-     * DSH_PET_TOKEN）：Helper 的 bridge 轉發帶上它，寫端點才不會被 403。
-     */
-    hostToken: token,
   };
 
   // 內建服務同時掛成屬性：舊版宿主半側是直接讀 ctx.llm / ctx.webServer 的。
   // 兩種取法都留著 → 新舊兩版宿主半側都能跑。
+  // （hostToken 也從這裡來 —— 形狀與讀法見 builtins 裡的說明。）
   Object.assign(context, builtins);
 
   return {

@@ -74,6 +74,14 @@ const APP_MODE = process.env.DSH_PET_APP_MODE === '1';
 //   来自 Node fetch（不带 Origin / Sec-Fetch-Site），没有令牌就会被守门 403。
 //   症状：桌面宠物右键「对话」→ 送出 → 「对话失败：此端点会调用模型，需要令牌」。
 const APP_TOKEN = APP_MODE ? process.env.DSH_PET_APP_TOKEN : process.env.DSH_PET_TOKEN || undefined;
+// 令牌是否到位的诊断行：**只报状态，绝不打印令牌本身**（它等价于登录态）。
+// 为什么要有这行：「桌面宠物右键对话 → 403 需要令牌」这个症状，
+// 唯一的根因就是这个令牌没到位（宿主没传 / 透传那一步漏了）。
+// 而这个症状在桌面上完全看不出原因 —— 宠物窗口一切正常，只有那一个菜单项失败。
+console.error(
+  '[workbuddy-pet-desktop-helper] 写端点令牌：' +
+    (APP_TOKEN ? '已取得（长度 ' + APP_TOKEN.length + '）' : '未取得 ← 写端点会 403'),
+);
 app.setName('workbuddy-pet-electron-helper');
 // Windows 任务栏分组：不设 AppUserModelID 时窗口归到 electron.exe 名下，任务栏按钮意外出现就显示
 // Electron 默认图标。必须在 ready 之前调用；独立应用与 DSH 内 helper 用不同 ID，避免被合成一组。
