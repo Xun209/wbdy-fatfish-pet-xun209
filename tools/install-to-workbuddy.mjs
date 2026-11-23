@@ -106,6 +106,35 @@ function findWorkBuddyHome() {
   return '';
 }
 
+/**
+ * 找出「本插件已經被註冊在哪個市集下」。
+ *
+ * ★ 這是更新場景的關鍵：使用者可能已經用**別的名稱**裝過舊版
+ *   （例如舊版叫 `fatfish-local`，新版預設叫 `fatfish-pet-local`）。
+ *   若不理，會建出第二個市集 → WorkBuddy 裡同時掛著兩份同一個插件，
+ *   舊的那份還是舊內容（使用者以為更新了，其實沒有）。
+ *   所以：先找出舊市集，沿用它（內容原地覆蓋）；找不到才用預設名。
+ * @param {string} pluginsDir - WorkBuddy 的 plugins 目錄。
+ * @returns {string} 市集名。
+ */
+function findExistingMarket(pluginsDir) {
+  const installedFile = join(pluginsDir, 'installed_plugins.json');
+  const installed = readJson(installedFile);
+  const plugins = installed.plugins || {};
+  for (const [key, entries] of Object.entries(plugins)) {
+    const at = key.indexOf('@');
+    if (at <= 0) continue;
+    if (key.slice(0, at) !== PLUGIN_NAME) continue;
+    const market = key.slice(at + 1);
+    // 確認這確實是本插件（而不是同名巧合）
+    const first = Array.isArray(entries) ? entries[0] : null;
+    if (first && typeof first.installPath === 'string' && existsSync(join(first.installPath, '.codebuddy-plugin', 'plugin.json'))) {
+      return market;
+    }
+  }
+  return '';
+}
+
 // ── 插件自己的身分（名字與版本一律以 plugin.json 為準）────────────────────────
 const manifestPath = join(PLUGIN_ROOT, '.codebuddy-plugin', 'plugin.json');
 if (!existsSync(manifestPath)) {
@@ -115,7 +144,6 @@ if (!existsSync(manifestPath)) {
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 const PLUGIN_NAME = String(manifest.name || 'fatfish-pet');
 const PLUGIN_VERSION = String(manifest.version || '1.0.0');
-const MARKET_NAME = MARKET || `${PLUGIN_NAME}-local`;
 
 const home = findWorkBuddyHome();
 if (!home) {
@@ -127,6 +155,12 @@ if (!home) {
 }
 
 const pluginsDir = join(home, 'plugins');
+// 更新場景：沿用「已經裝過的那個市集名」，不要另起一個（否則會同時掛兩份同一插件）。
+const existingMarket = findExistingMarket(pluginsDir);
+const MARKET_NAME = MARKET || existingMarket || `${PLUGIN_NAME}-local`;
+if (existingMarket && !MARKET) {
+  console.log(`[install] 偵測到已安裝於市集「${existingMarket}」→ 原地更新（不另建市集）`);
+}
 const marketRoot = join(pluginsDir, 'marketplaces', MARKET_NAME);
 const marketPluginDir = join(marketRoot, 'plugins', PLUGIN_NAME);
 const cacheDir = join(pluginsDir, 'cache', MARKET_NAME, PLUGIN_NAME, PLUGIN_VERSION);
@@ -184,6 +218,16 @@ if (!DRY_RUN) {
   rmSync(cacheDir, { recursive: true, force: true });
   mkdirSync(dirname(cacheDir), { recursive: true });
   cpSync(marketPluginDir, cacheDir, { recursive: true });
+  // 清掉同一插件的**舊版快取目錄**：版本變了之後舊目錄就是垃圾，留著只會讓人困惑
+  // （「我明明更新了，為什麼那個資料夾還是舊的」）。
+  const cachePluginRoot = join(pluginsDir, 'cache', MARKET_NAME, PLUGIN_NAME);
+  if (existsSync(cachePluginRoot)) {
+    for (const name of readdirSync(cachePluginRoot)) {
+      if (name === PLUGIN_VERSION) continue;
+      rmSync(join(cachePluginRoot, name), { recursive: true, force: true });
+      console.log(`[install] 清掉舊版快取     : ${join(cachePluginRoot, name)}`);
+    }
+  }
 }
 console.log(`[install] 市集副本        : ${marketPluginDir}`);
 console.log(`[install] 快取副本        : ${cacheDir}`);
