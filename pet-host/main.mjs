@@ -52,6 +52,7 @@ import { DEFAULT_PORT, createGuard, createToken, listen } from './lib/server.mjs
 import { createBridge } from './lib/work-status.mjs';
 import { createSessionBinder, loadPetList } from './lib/multipet.mjs';
 import { runSelftest } from './lib/selftest.mjs';
+import { createWorkBuddyWatcher, waitForWorkBuddy } from './lib/workbuddy-liveness.mjs';
 
 const USAGE = `大肥魚寵物主機（WorkBuddy 版）
 
@@ -64,6 +65,8 @@ const USAGE = `大肥魚寵物主機（WorkBuddy 版）
   --config <路徑>         寵物設定檔（JSONC）；首次啟動會複製成使用者設定，之後以使用者設定為準
   --config-force          強制用 --config 覆蓋使用者設定（舊版會留一份 .bak）
   --headless              只跑服務與狀態橋，不開桌面透明小窗（無 GUI 環境用）
+  --follow-workbuddy      預設：WorkBuddy 徹底關閉時，寵物主機跟著退出（視窗關掉不算）
+  --no-follow-workbuddy   不跟著 WorkBuddy 走：寵物主機常駐，與 WorkBuddy 生死無關
   --selftest             自我驗證後自動退出
   --selftest-voice       語音自檢（Windows SAPI 實際說一句話）後自動退出
   --selftest-multipet    多寵物自檢（兩隻寵物 + session 指派）後自動退出
@@ -95,6 +98,7 @@ function parseArgs(argv) {
     selftestVoice: false,
     selftestMultipet: false,
     dshPetRoot: '',
+    followWorkBuddy: true,
     debug: false,
     help: false,
   };
@@ -128,6 +132,10 @@ function parseArgs(argv) {
       options.selftestMultipet = true;
     } else if (arg === '--dsh-pet-root' || arg.startsWith('--dsh-pet-root=')) {
       options.dshPetRoot = resolve(next());
+    } else if (arg === '--follow-workbuddy') {
+      options.followWorkBuddy = true;
+    } else if (arg === '--no-follow-workbuddy') {
+      options.followWorkBuddy = false;
     } else if (arg === '--debug') {
       options.debug = true;
     } else if (arg === '-h' || arg === '--help') {
@@ -306,6 +314,25 @@ async function main() {
   }
   logger.info(`workbuddy-pet 套件根：${dshPetRoot}`);
 
+  // ★ 跟著 WorkBuddy 生死：先確認它在不在，再開桌寵。
+  //
+  // 順序很重要：桌寵小窗是 `dshPet.apply()` 啟動 Helper 時才出現的，
+  // 所以「先判定、後啟動」能保證 WorkBuddy 沒開時**不會先亮出桌寵**。
+  //
+  // 判定對象是**行程**不是視窗：WorkBuddy 縮到托盤／背景時行程還在，
+  // 那種情況桌寵照常運作（Agent 還在工作，寵物還要報狀態）。
+  //
+  // WorkBuddy 沒在跑時不直接退出，而是**等它**：使用者常常是「先開 WorkBuddy、
+  // 再啟動寵物」，順序反了也不該讓他重來一次。等超時才放棄。
+  if (options.followWorkBuddy) {
+    const ready = await waitForWorkBuddy({ logger, timeoutMs: 10 * 60 * 1000 });
+    if (!ready) {
+      logger.error('等不到 WorkBuddy 啟動（10 分鐘）→ 寵物主機不啟動。請先開 WorkBuddy 再啟動寵物。');
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   // 注入 DSH_HOME：讓 DSH 的設定、日誌、對話記憶都落在 WorkBuddy 自己的目錄下，
   // 不污染使用者的 ~/.dsh，也讓「刪掉 pet-host 目錄」等於恢復出厂設定。
   const dshHome = deriveDshHome(stateDir);
@@ -384,6 +411,8 @@ async function main() {
   const host = createHostContext({ logger, routes, portRef, originRef, ai, token });
 
   let shuttingDown = false;
+  /** WorkBuddy 存活監看器（跟著它生死）；不跟時為 null。 */
+  let watcher = null;
   const server = await listen({
     port: options.port,
     routes,
@@ -478,6 +507,7 @@ async function main() {
     dshHome,
     dshPetRoot,
     headless: options.headless,
+    followWorkBuddy: options.followWorkBuddy,
   });
 
   // 收尾：先釋放插件的 effect（其中包含「停掉桌面 Helper」），再關服務。
@@ -485,6 +515,13 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`收尾（${reason}）…`);
+    // 先停存活監看：它會在 WorkBuddy 消失時呼叫 requestShutdown，不停會在收尾途中再觸發一次。
+    try {
+      watcher?.stop();
+      watcher = null;
+    } catch {
+      /* 停不掉也不影響收尾 */
+    }
     try {
       await host.dispose();
     } catch (error) {
@@ -523,6 +560,24 @@ async function main() {
   process.on('SIGTERM', () => requestShutdown('SIGTERM'));
   process.on('SIGHUP', () => requestShutdown('SIGHUP'));
 
+  // 跟著 WorkBuddy 生死：WorkBuddy **徹底關閉**（行程結束）時，寵物主機跟著退出。
+  //
+  // 判定的是「行程」不是「視窗」：WorkBuddy 縮到托盤／背景時行程還在，
+  // 那時桌寵必須活著（Agent 還在工作，寵物還要報狀態）。
+  // 用 --no-follow-workbuddy 可以關掉這個行為（自己常駐）。
+  if (options.followWorkBuddy) {
+    watcher = createWorkBuddyWatcher({
+      intervalMs: 3000,
+      logger,
+      onClosed: () => requestShutdown('WorkBuddy 已關閉'),
+    });
+    const alive = await watcher.checkNow();
+    if (alive === false) {
+      // 啟動時就確定 WorkBuddy 沒在跑：這時不該先亮出桌寵，等它起來再說。
+      logger.warn('WorkBuddy 沒在執行 → 寵物主機先待命，等 WorkBuddy 啟動後才會跟著運作');
+    }
+  }
+
   if (options.selftest) {
     const result = await runSelftest({ origin: realOrigin, token, stateFile, logger });
     process.stdout.write('\n===== pet-host 自檢結果 =====\n');
@@ -539,7 +594,7 @@ async function main() {
  * 為什麼要印這麼多行：桌寵是「看得見但看不見過程」的東西，
  * 使用者要能靠這段輸出確認寵物在跑、狀態從哪來、要去哪裡調設定。
  */
-function printSummary({ logger, origin, pets, desktop, stateFile, configInfo, runtimeFile, dshHome, dshPetRoot, headless }) {
+function printSummary({ logger, origin, pets, desktop, stateFile, configInfo, runtimeFile, dshHome, dshPetRoot, headless, followWorkBuddy }) {
   const lines = [
     '',
     '===== WorkBuddy 大肥魚寵物主機 =====',
@@ -552,6 +607,7 @@ function printSummary({ logger, origin, pets, desktop, stateFile, configInfo, ru
     `  令牌檔      ${runtimeFile}（令牌只寫在這裡，不進日誌）`,
     `  DSH 主目錄  ${dshHome}`,
     `  DSH 套件    ${dshPetRoot}`,
+    `  跟隨 WorkBuddy  ${followWorkBuddy ? '是（WorkBuddy 徹底關閉時本主機跟著退出；視窗關掉不算）' : '否（--no-follow-workbuddy：常駐）'}`,
     '  離開        Ctrl+C 或 POST /shutdown（需令牌）',
     '',
   ];

@@ -137,6 +137,10 @@ wbdy-fatfish-pet/
   各對應一支專屬動畫與一組氣泡文案。
 - **可對話**：Agent 透過 MCP 工具 `pet_say` 直接讓她冒出台詞；`pet_state` 查她現在知道什麼。
 - **零設定檔依賴**：預設設定直接吃 `assets/config.jsonc`，使用者想改再覆寫。
+- **跟著 WorkBuddy 生死**：WorkBuddy **徹底關閉**（行程結束）時寵物跟著退出；
+  只是**視窗關掉、行程還在後台**時寵物照常活著（Agent 還在工作，寵物還要報狀態）。
+  判定的是行程不是視窗（見 `pet-host/lib/workbuddy-liveness.mjs`）。
+  不想要這個行為就加 `--no-follow-workbuddy`。
 
 ---
 

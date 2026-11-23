@@ -134,6 +134,7 @@ node "<plugin-root>/pet-host/main.mjs"
 | `--state-file PATH` | 見第 5 節 | 覆寫狀態檔路徑。 |
 | `--config PATH` | `assets/config.jsonc` | 指定設定檔；不給就自動沿用 DSH 預設設定。 |
 | `--headless` | 關 | 只跑服務與狀態橋，**不**開桌面透明小窗（無 GUI 環境用）。 |
+| `--no-follow-workbuddy` | 關（預設是**跟隨**） | 不跟著 WorkBuddy 走：寵物主機常駐，與 WorkBuddy 生死無關。 |
 | `--selftest` | — | 自我驗證後自動退出（診斷用）。 |
 | `--dsh-pet-root PATH` | 插件根 | DSH pet 套件根（見第 6 節）。 |
 | `-h` / `--help` | — | 說明。 |
@@ -146,6 +147,21 @@ node "<plugin-root>/pet-host/main.mjs"
 | `DSH_PET_PACKAGE_ROOT` | DSH pet 套件根（見第 6 節）。 |
 | `DSH_PET_ELECTRON_PATH` | 指定 Electron 執行檔（可選）。 |
 
+### 跟著 WorkBuddy 生死（預設行為）
+
+寵物是 WorkBuddy 的「隨身寵物」，**跟著它一起生一起死**：
+
+- **WorkBuddy 徹底關閉（行程結束）→ 寵物主機跟著退出**（桌寵小窗與托盤圖示一起收掉）。
+- **只是視窗關掉、行程還在後台跑 → 寵物照常活著**（Agent 還在工作，寵物還要報狀態）。
+
+判定的是**行程**而不是視窗（實作見 `pet-host/lib/workbuddy-liveness.mjs`，每 3 秒查一次，
+連續兩次確定行程不在才收工 —— 單次查詢異常不至於讓寵物跟著跑掉）。
+
+另外：**WorkBuddy 沒開時啟動寵物主機，它會等**（最多 10 分鐘），
+等 WorkBuddy 起來才亮出桌寵 —— 順序反了不用重來一次。
+
+> 不想要這個行為（例如你想讓寵物全天待命）：加 `--no-follow-workbuddy`。
+
 ### 開機自啟（可選）
 
 若使用者想讓寵物跟著電腦開機：
@@ -154,8 +170,8 @@ node "<plugin-root>/pet-host/main.mjs"
   「shell:startup」資料夾（`Win + R` → `shell:startup`）
 - macOS / Linux：`~/.config/autistart/*.desktop` 或 launchd
 
-> 桌寵主機與 WorkBuddy 沒有父子關係 —— WorkBuddy 關了它也活著，反之亦然。
-> 要跟 WorkBuddy 一起啟動，就把啟動項放進 WorkBuddy 的啟動項。
+> 桌寵主機預設跟著 WorkBuddy 走（WorkBuddy 關了它也退出）。
+> 想让它全天待命，加 `--no-follow-workbuddy`。
 
 ---
 
