@@ -43,11 +43,12 @@ node --version
 
 ### 2.1 取得插件（GitHub）
 
-下載本插件的壓縮包並解壓（解壓後的資料夾就是插件根，裡面有 `.codebuddy-plugin/`）：
+下載本插件的壓縮包並解壓（解壓後會多一層 `wbdy-fatfish-pet/` 資料夾，
+**那一層就是插件根**，裡面有 `.codebuddy-plugin/`）：
 
-- 發行版壓縮包（**推薦**，資料夾名就是 `fatfish-pet`）：
+- 發行版壓縮包（**推薦**）：
   `https://github.com/Xun209/wbdy-fatfish-pet-xun209/releases/latest/download/wbdy-fatfish-pet.zip`
-- 原始碼壓縮包（資料夾名是 `wbdy-fatfish-pet-xun209-main`，**要自己改名成 `fatfish-pet`**）：
+- 原始碼壓縮包（多一層 `wbdy-fatfish-pet-xun209-main/`，要自己再解一層）：
   `https://github.com/Xun209/wbdy-fatfish-pet-xun209/archive/refs/heads/main.zip`
 
 ### 2.2 執行安裝腳本（**一步到位，建議走這條**）
