@@ -41,12 +41,49 @@ node --version
 
 ## 2. 安裝插件
 
-把插件目錄（含 `.codebuddy-plugin/`）放進 **WorkBuddy 的本地技能市集目錄**：
+### 2.1 取得插件（GitHub）
 
-- 國內版：`~/.workbuddy/skills-marketplace/`
-- 國際版：`~/.workbuddy-ai/skills-marketplace/`
+下載本插件的壓縮包並解壓（解壓後的資料夾就是插件根，裡面有 `.codebuddy-plugin/`）：
 
-目錄結構（`.codebuddy-plugin/marketplace.json` 是市集清單，`plugins[]` 指向插件）：
+- 發行版壓縮包（**推薦**，資料夾名就是 `fatfish-pet`）：
+  `https://github.com/Xun209/wbdy-fatfish-pet-xun209/releases/latest/download/wbdy-fatfish-pet.zip`
+- 原始碼壓縮包（資料夾名是 `wbdy-fatfish-pet-xun209-main`，**要自己改名成 `fatfish-pet`**）：
+  `https://github.com/Xun209/wbdy-fatfish-pet-xun209/archive/refs/heads/main.zip`
+
+### 2.2 執行安裝腳本（**一步到位，建議走這條**）
+
+在**插件根目錄**（含 `.codebuddy-plugin/` 的那一層）執行：
+
+```bash
+node tools/install-to-workbuddy.mjs
+```
+
+它會自己做完這些事（都是 WorkBuddy 的插件註冊機制，缺一處就認不出插件）：
+
+1. 偵測 WorkBuddy 主目錄（國內版 `~/.workbuddy`、國際版 `~/.workbuddy-ai`）；
+2. 複製到市集目錄 `~/.workbuddy/plugins/marketplaces/<市集名>/plugins/fatfish-pet/`；
+3. 複製到**快取目錄** `~/.workbuddy/plugins/cache/<市集名>/fatfish-pet/<版本>/`
+   —— WorkBuddy 實際載入的是這一份；
+4. 寫市集清單 `.codebuddy-plugin/marketplace.json`；
+5. 更新 `known_marketplaces.json` / `installed_plugins.json` / `configured-plugins.json` /
+   `settings.json` 的 `enabledPlugins`，把本插件標成「已安裝且啟用」。
+
+> 先看它要動什麼（不寫檔案）：`node tools/install-to-workbuddy.mjs --dry-run`
+> 從註冊檔移除（檔案保留）：`node tools/install-to-workbuddy.mjs --disable`
+
+### 2.3 讓 WorkBuddy 認到它
+
+到 **WorkBuddy → 設定 → 插件** 確認 `fatfish-pet` 已啟用；
+若沒出現，在對話框執行 **`/reload-plugins`**（不必重啟 WorkBuddy）。
+
+### 2.4 手動安裝（不想用腳本時）
+
+把插件目錄放進 WorkBuddy 的**本地市集**：
+
+- 國內版：`~/.workbuddy/plugins/marketplaces/<市集名>/plugins/fatfish-pet/`
+- 國際版：`~/.workbuddy-ai/plugins/marketplaces/<市集名>/plugins/fatfish-pet/`
+
+並在該市集根目錄寫 `.codebuddy-plugin/marketplace.json`（`plugins[]` 指向插件）：
 
 ```json
 {
@@ -57,15 +94,20 @@ node --version
     {
       "name": "fatfish-pet",
       "description": "Blue fatfish (whale girl) desktop pet for WorkBuddy.",
-      "version": "1.0.0",
-      "source": "./fatfish-pet",
-      "category": "skill"
+      "version": "1.1.0",
+      "source": "./plugins/fatfish-pet",
+      "category": "tool",
+      "license": "MIT"
     }
   ]
 }
 ```
 
-然後到 **WorkBuddy → 設定 → 插件**，把 `fatfish-pet` 啟用。
+然後把同一份插件複製到**快取目錄** `~/.workbuddy/plugins/cache/<市集名>/fatfish-pet/<版本>/`
+（WorkBuddy 實際載入的是這一份），並在 `~/.workbuddy/plugins/` 下的
+`known_marketplaces.json` / `installed_plugins.json` / `configured-plugins.json`
+與 `~/.workbuddy/settings.json` 的 `enabledPlugins` 註冊它。
+**建議直接用 2.2 的腳本** —— 這六處手動對齊很容易漏。
 
 > 啟用後 WorkBuddy 會掛上兩道機制：
 > - **hook**（`hooks/hooks.json`）→ `scripts/wb-state-hook.mjs`：把 Agent 事件即時寫成狀態檔
@@ -139,21 +181,24 @@ node "<plugin-root>/scripts/wb-state-hook.mjs" --get   # 若支援此旗標；�
 
 ### 4.2 她自己的對話窗（AI 對話 / 碎碎念）
 
-這兩個功能要有一個 OpenAI 相容的模型後端。主機啟動時會自己找，依序：
+這兩個功能要有一個 OpenAI 相容的模型後端。主機啟動時會自己找，**依序**：
 
 | 順位 | 來源 | 怎麼設定 |
 |---|---|---|
 | 1 | 環境變數 | `WORKBUDDY_PET_AI_BASE_URL`、`WORKBUDDY_PET_AI_API_KEY`、`WORKBUDDY_PET_AI_MODEL`、`WORKBUDDY_PET_AI_PROVIDER` |
 | 2 | 設定檔 | `<狀態目錄>\pet-host\ai.json`，內容 `{"baseUrl":"…","apiKey":"…","model":"…","provider":"…"}` |
-| 3 | **DSH 憑據庫**（預設會用到） | `~/.dsh/.credentials.yaml` 裡 `refs` 的 `MINIMAX_CN_API_KEY`／`MINIMAX_API_KEY`；端點預設 `https://api.minimaxi.com/v1`，模型預設 `MiniMax-M3.1-Flash` |
+| 3 | **WorkBuddy 桌面端（自動接入）** —— 預設會用到 | **不用設定**：偵測到本機 WorkBuddy 且已登入就直接用它的帳號額度（預設模型 `hy4flash`）；想指定別支就設 `WORKBUDDY_PET_AI_MODEL` |
+| 4 | DSH 憑據庫 | `~/.dsh/.credentials.yaml` 裡 `refs` 的 `MINIMAX_CN_API_KEY`／`MINIMAX_API_KEY`；端點預設 `https://api.minimaxi.com/v1`，模型預設 `MiniMax-M3.1-Flash` |
 
-> 第 3 順位是「沿用本機已有的金鑰」：DSH 換金鑰，寵物跟著換，不用改兩處。
-> 想完全獨立，就用第 1 或第 2 順位指定自己的金鑰。
+> **順位 3 是最好用的**：使用者已經在 WorkBuddy 裡登入了、額度就在那裡，
+> 寵物不需要另外給金鑰（憑據由 WorkBuddy 客戶端行程現取現解，全程唯讀）。
+> 順位 1、2 是「使用者明確指定」，優先於自動發現。
+> 順位 4 是給「沒裝 WorkBuddy 或沒登入」時的兜底。
 
 主機啟動日誌會寫明實際用的是哪一個：
 
 ```
-模型後端：minimax-cn/MiniMax-M3.1-Flash（https://api.minimaxi.com/v1）← DSH 憑據庫 …
+模型後端：workbuddy/hy4flash（https://copilot.tencent.com）← WorkBuddy 桌面端（D:\…\WorkBuddy.exe，帳號 7e3091b8…）
 ```
 
 沒接上時不會假裝成功，碎碎念與對話會明確失敗（主機其他功能照常）。
